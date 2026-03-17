@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminRequestsPanel } from "@/islands/admin/AdminRequestsPanel";
+---
+
+<AdminLayout title="求片 Agent - LumenStream Admin" active="requests">
+  <AdminRequestsPanel client:load />
+</AdminLayout>

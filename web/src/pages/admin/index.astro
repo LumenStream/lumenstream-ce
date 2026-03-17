@@ -1,0 +1,18 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Admin - LumenStream Web">
+  <main
+    class="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center gap-4 px-4 text-center"
+  >
+    <p class="text-muted-foreground text-sm">正在跳转到管理总览...</p>
+    <a class="border-border rounded-md border px-4 py-2" href="/admin/overview">前往管理总览</a>
+  </main>
+
+  <script>
+    if (typeof window !== "undefined") {
+      window.location.replace("/admin/overview");
+    }
+  </script>
+</BaseLayout>

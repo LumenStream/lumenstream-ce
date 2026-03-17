@@ -1,0 +1,59 @@
+name: lumenstream-fullstack
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lumenstream}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lumenstream}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.15
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ls_meili_default_key}
+    ports:
+      - "7700:7700"
+      - "8096:8096"
+      - "4321:4321"
+    volumes:
+      - meili_data:/meili_data
+
+  lumenstream:
+    image: ${LS_FULLSTACK_IMAGE:-ghcr.io/sleepstars/lumenstream-fullstack:latest}
+    restart: unless-stopped
+    # lumenstream currently expects Meilisearch at 127.0.0.1:7700,
+    # so lumenstream shares meilisearch network namespace.
+    network_mode: service:meilisearch
+    depends_on:
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+    environment:
+      LS_DATABASE_URL: ${LS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/lumenstream}
+      LS_DATABASE_MAX_CONNECTIONS: ${LS_DATABASE_MAX_CONNECTIONS:-20}
+      LS_BOOTSTRAP_ADMIN_USER: ${LS_BOOTSTRAP_ADMIN_USER:-}
+      LS_BOOTSTRAP_ADMIN_PASSWORD: ${LS_BOOTSTRAP_ADMIN_PASSWORD:-}
+      LS_API_BASE_URL: ${LS_API_BASE_URL:-http://127.0.0.1:8096}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ls_meili_default_key}
+      LS_CORS_ALLOW_ORIGINS: ${LS_CORS_ALLOW_ORIGINS:-}
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 4321
+    volumes:
+      - ls_cache:/app/cache
+
+volumes:
+  ls_cache:
+  postgres_data:
+  meili_data:

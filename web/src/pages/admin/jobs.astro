@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminJobsPanel } from "@/islands/admin/AdminJobsPanel";
+---
+
+<AdminLayout title="任务中心 - LumenStream Web" active="jobs">
+  <AdminJobsPanel client:load />
+</AdminLayout>

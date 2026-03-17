@@ -1,0 +1,12 @@
+---
+import AppLayout from "@/layouts/AppLayout.astro";
+import { ItemDetail } from "@/islands/media/ItemDetail";
+
+export function getStaticPaths() {
+  return [{ params: { slug: undefined } }];
+}
+---
+
+<AppLayout title="详情 - LumenStream Web" active="home">
+  <ItemDetail client:load />
+</AppLayout>

@@ -1,0 +1,1726 @@
+{
+  "timestamp": "2026-02-25",
+  "ids": {
+    "ls_user_id": "019c850d-9322-77b0-ac18-f37f60886904",
+    "emby_user_id": "3919956675234f33bd762aaef2bb64da",
+    "ls_item_id": "3071",
+    "emby_item_id": "118665"
+  },
+  "cases": [
+    {
+      "name": "/System/Info/Public",
+      "ls_path": "/System/Info/Public",
+      "emby_path": "/System/Info/Public",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [],
+      "extra_in_nms": [],
+      "type_mismatch": []
+    },
+    {
+      "name": "/System/Info",
+      "ls_path": "/System/Info",
+      "emby_path": "/System/Info",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [],
+      "extra_in_nms": [
+        {
+          "path": "CachePath",
+          "ls": "str"
+        },
+        {
+          "path": "InternalMetadataPath",
+          "ls": "str"
+        },
+        {
+          "path": "ItemsByNamePath",
+          "ls": "str"
+        },
+        {
+          "path": "LogPath",
+          "ls": "str"
+        },
+        {
+          "path": "PackageName",
+          "ls": "str"
+        },
+        {
+          "path": "ProductName",
+          "ls": "str"
+        },
+        {
+          "path": "ProgramDataPath",
+          "ls": "str"
+        },
+        {
+          "path": "StartupWizardCompleted",
+          "ls": "bool=true"
+        },
+        {
+          "path": "TranscodingTempPath",
+          "ls": "str"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "CanSelfRestart",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        },
+        {
+          "path": "HardwareAccelerationRequiresPremiere",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        },
+        {
+          "path": "HasUpdateAvailable",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        }
+      ]
+    },
+    {
+      "name": "/Sessions",
+      "ls_path": "/Sessions",
+      "emby_path": "/Sessions",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "[].AdditionalUsers",
+          "emby": "array[0]"
+        },
+        {
+          "path": "[].InternalDeviceId",
+          "emby": "int"
+        },
+        {
+          "path": "[].PlayState",
+          "emby": "object"
+        },
+        {
+          "path": "[].PlayState.CanSeek",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].PlayState.IsMuted",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].PlayState.IsPaused",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].PlayState.PlayMethod",
+          "emby": "str"
+        },
+        {
+          "path": "[].PlayState.PlaybackRate",
+          "emby": "int"
+        },
+        {
+          "path": "[].PlayState.RepeatMode",
+          "emby": "str"
+        },
+        {
+          "path": "[].PlayState.Shuffle",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].PlayState.SleepTimerMode",
+          "emby": "str"
+        },
+        {
+          "path": "[].PlayState.SubtitleOffset",
+          "emby": "int"
+        }
+      ],
+      "extra_in_nms": [
+        {
+          "path": "[].DeviceType",
+          "ls": "str"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "(root)",
+          "ls": "array[189]",
+          "emby": "array[5]"
+        }
+      ]
+    },
+    {
+      "name": "/Users/{id}/Views",
+      "ls_path": "/Users/019c850d-9322-77b0-ac18-f37f60886904/Views",
+      "emby_path": "/Users/3919956675234f33bd762aaef2bb64da/Views",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "DateModified",
+          "emby": "str"
+        },
+        {
+          "path": "DisplayPreferencesId",
+          "emby": "str"
+        },
+        {
+          "path": "Etag",
+          "emby": "str"
+        },
+        {
+          "path": "ExternalUrls",
+          "emby": "array[0]"
+        },
+        {
+          "path": "ForcedSortName",
+          "emby": "str"
+        },
+        {
+          "path": "Guid",
+          "emby": "str"
+        },
+        {
+          "path": "ImageTags.Primary",
+          "emby": "str"
+        },
+        {
+          "path": "LockData",
+          "emby": "bool=false"
+        },
+        {
+          "path": "LockedFields",
+          "emby": "array[0]"
+        },
+        {
+          "path": "PresentationUniqueKey",
+          "emby": "str"
+        },
+        {
+          "path": "PrimaryImageAspectRatio",
+          "emby": "float"
+        },
+        {
+          "path": "RemoteTrailers",
+          "emby": "array[0]"
+        },
+        {
+          "path": "Taglines",
+          "emby": "array[0]"
+        }
+      ],
+      "extra_in_nms": [
+        {
+          "path": "LocationType",
+          "ls": "str"
+        },
+        {
+          "path": "Path",
+          "ls": "str"
+        },
+        {
+          "path": "SupportsSync",
+          "ls": "bool=true"
+        },
+        {
+          "path": "UserData.PlayCount",
+          "ls": "int"
+        }
+      ],
+      "type_mismatch": []
+    },
+    {
+      "name": "/Users/{id}/Items?Limit=1&Recursive=true",
+      "ls_path": "/Users/019c850d-9322-77b0-ac18-f37f60886904/Items?Limit=1&Recursive=true",
+      "emby_path": "/Users/3919956675234f33bd762aaef2bb64da/Items?Limit=1&Recursive=true",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "BackdropImageTags",
+          "emby": "array[0]"
+        }
+      ],
+      "extra_in_nms": [
+        {
+          "path": "CanDelete",
+          "ls": "bool=false"
+        },
+        {
+          "path": "CanDownload",
+          "ls": "bool=true"
+        },
+        {
+          "path": "Container",
+          "ls": "str"
+        },
+        {
+          "path": "DateCreated",
+          "ls": "str"
+        },
+        {
+          "path": "ImageTags.Primary",
+          "ls": "str"
+        },
+        {
+          "path": "IsFolder",
+          "ls": "bool=false"
+        },
+        {
+          "path": "LocationType",
+          "ls": "str"
+        },
+        {
+          "path": "MediaSources",
+          "ls": "array[1]"
+        },
+        {
+          "path": "MediaSources[].Bitrate",
+          "ls": "NoneType=null"
+        },
+        {
+          "path": "MediaSources[].Container",
+          "ls": "str"
+        },
+        {
+          "path": "MediaSources[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams",
+          "ls": "array[0]"
+        },
+        {
+          "path": "MediaSources[].Path",
+          "ls": "str"
+        },
+        {
+          "path": "MediaSources[].Protocol",
+          "ls": "str"
+        },
+        {
+          "path": "MediaSources[].RunTimeTicks",
+          "ls": "NoneType=null"
+        },
+        {
+          "path": "MediaSources[].Size",
+          "ls": "int"
+        },
+        {
+          "path": "MediaSources[].SupportsDirectPlay",
+          "ls": "bool=true"
+        },
+        {
+          "path": "MediaSources[].SupportsDirectStream",
+          "ls": "bool=true"
+        },
+        {
+          "path": "MediaSources[].SupportsTranscoding",
+          "ls": "bool=false"
+        },
+        {
+          "path": "MediaType",
+          "ls": "str"
+        },
+        {
+          "path": "Overview",
+          "ls": "str"
+        },
+        {
+          "path": "ParentId",
+          "ls": "str"
+        },
+        {
+          "path": "Path",
+          "ls": "str"
+        },
+        {
+          "path": "PlayAccess",
+          "ls": "str"
+        },
+        {
+          "path": "PrimaryImageTag",
+          "ls": "str"
+        },
+        {
+          "path": "ProductionYear",
+          "ls": "int"
+        },
+        {
+          "path": "Size",
+          "ls": "int"
+        },
+        {
+          "path": "SupportsSync",
+          "ls": "bool=true"
+        }
+      ],
+      "type_mismatch": []
+    },
+    {
+      "name": "/Users/{id}/Items/Latest?Limit=1",
+      "ls_path": "/Users/019c850d-9322-77b0-ac18-f37f60886904/Items/Latest?Limit=1",
+      "emby_path": "/Users/3919956675234f33bd762aaef2bb64da/Items/Latest?Limit=1",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "[].AirDays",
+          "emby": "array[0]"
+        },
+        {
+          "path": "[].BackdropImageTags",
+          "emby": "array[1]"
+        },
+        {
+          "path": "[].BackdropImageTags[]",
+          "emby": "str"
+        },
+        {
+          "path": "[].EndDate",
+          "emby": "str"
+        },
+        {
+          "path": "[].ImageTags.Logo",
+          "emby": "str"
+        },
+        {
+          "path": "[].RunTimeTicks",
+          "emby": "int"
+        },
+        {
+          "path": "[].ServerId",
+          "emby": "str"
+        },
+        {
+          "path": "[].Status",
+          "emby": "str"
+        },
+        {
+          "path": "[].UserData",
+          "emby": "object"
+        },
+        {
+          "path": "[].UserData.IsFavorite",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].UserData.PlayCount",
+          "emby": "int"
+        },
+        {
+          "path": "[].UserData.PlaybackPositionTicks",
+          "emby": "int"
+        },
+        {
+          "path": "[].UserData.Played",
+          "emby": "bool=false"
+        },
+        {
+          "path": "[].UserData.UnplayedItemCount",
+          "emby": "int"
+        }
+      ],
+      "extra_in_nms": [
+        {
+          "path": "[].CanDelete",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].CanDownload",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Container",
+          "ls": "str"
+        },
+        {
+          "path": "[].DateCreated",
+          "ls": "str"
+        },
+        {
+          "path": "[].LocationType",
+          "ls": "str"
+        },
+        {
+          "path": "[].MediaSources",
+          "ls": "array[1]"
+        },
+        {
+          "path": "[].MediaSources[].Bitrate",
+          "ls": "NoneType=null"
+        },
+        {
+          "path": "[].MediaSources[].Container",
+          "ls": "str"
+        },
+        {
+          "path": "[].MediaSources[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "[].MediaSources[].MediaStreams",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].MediaSources[].Path",
+          "ls": "str"
+        },
+        {
+          "path": "[].MediaSources[].Protocol",
+          "ls": "str"
+        },
+        {
+          "path": "[].MediaSources[].RunTimeTicks",
+          "ls": "NoneType=null"
+        },
+        {
+          "path": "[].MediaSources[].SupportsDirectPlay",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].MediaSources[].SupportsDirectStream",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].MediaSources[].SupportsTranscoding",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].MediaType",
+          "ls": "str"
+        },
+        {
+          "path": "[].ParentId",
+          "ls": "str"
+        },
+        {
+          "path": "[].Path",
+          "ls": "str"
+        },
+        {
+          "path": "[].PlayAccess",
+          "ls": "str"
+        },
+        {
+          "path": "[].PrimaryImageTag",
+          "ls": "str"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "[].IsFolder",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        }
+      ]
+    },
+    {
+      "name": "/Users/{id}/Items/Resume?Limit=1",
+      "ls_path": "/Users/019c850d-9322-77b0-ac18-f37f60886904/Items/Resume?Limit=1",
+      "emby_path": "/Users/3919956675234f33bd762aaef2bb64da/Items/Resume?Limit=1",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [],
+      "extra_in_nms": [
+        {
+          "path": "Items[].BackdropImageTags",
+          "ls": "array[1]"
+        },
+        {
+          "path": "Items[].BackdropImageTags[]",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].CanDelete",
+          "ls": "bool=false"
+        },
+        {
+          "path": "Items[].CanDownload",
+          "ls": "bool=true"
+        },
+        {
+          "path": "Items[].CommunityRating",
+          "ls": "float"
+        },
+        {
+          "path": "Items[].Container",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].DateCreated",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Genres",
+          "ls": "array[6]"
+        },
+        {
+          "path": "Items[].Genres[]",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].ImageTags",
+          "ls": "object"
+        },
+        {
+          "path": "Items[].ImageTags.Logo",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].ImageTags.Primary",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].IsFolder",
+          "ls": "bool=false"
+        },
+        {
+          "path": "Items[].LocationType",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].MediaSources",
+          "ls": "array[1]"
+        },
+        {
+          "path": "Items[].MediaSources[].Bitrate",
+          "ls": "NoneType=null"
+        },
+        {
+          "path": "Items[].MediaSources[].Container",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].MediaSources[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].MediaSources[].MediaStreams",
+          "ls": "array[0]"
+        },
+        {
+          "path": "Items[].MediaSources[].Path",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].MediaSources[].Protocol",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].MediaSources[].RunTimeTicks",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].MediaSources[].Size",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].MediaSources[].SupportsDirectPlay",
+          "ls": "bool=true"
+        },
+        {
+          "path": "Items[].MediaSources[].SupportsDirectStream",
+          "ls": "bool=true"
+        },
+        {
+          "path": "Items[].MediaSources[].SupportsTranscoding",
+          "ls": "bool=false"
+        },
+        {
+          "path": "Items[].MediaType",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Name",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Overview",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].ParentId",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Path",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].People",
+          "ls": "array[24]"
+        },
+        {
+          "path": "Items[].People[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].People[].Name",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].People[].Role",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].People[].Type",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].PlayAccess",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].PremiereDate",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].PrimaryImageTag",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].ProductionYear",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].ProviderIds",
+          "ls": "object"
+        },
+        {
+          "path": "Items[].ProviderIds.Tmdb",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].RunTimeTicks",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].ServerId",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Size",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].SortName",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].Studios",
+          "ls": "array[1]"
+        },
+        {
+          "path": "Items[].Studios[].Name",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].SupportsSync",
+          "ls": "bool=true"
+        },
+        {
+          "path": "Items[].Type",
+          "ls": "str"
+        },
+        {
+          "path": "Items[].UserData",
+          "ls": "object"
+        },
+        {
+          "path": "Items[].UserData.IsFavorite",
+          "ls": "bool=false"
+        },
+        {
+          "path": "Items[].UserData.PlayCount",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].UserData.PlaybackPositionTicks",
+          "ls": "int"
+        },
+        {
+          "path": "Items[].UserData.Played",
+          "ls": "bool=false"
+        },
+        {
+          "path": "Items[].UserData.PlayedPercentage",
+          "ls": "float"
+        },
+        {
+          "path": "StartIndex",
+          "ls": "int"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "Items",
+          "ls": "array[1]",
+          "emby": "array[0]"
+        }
+      ]
+    },
+    {
+      "name": "/Users/{id}/Items/{itemId}",
+      "ls_path": "/Users/019c850d-9322-77b0-ac18-f37f60886904/Items/3071",
+      "emby_path": "/Users/3919956675234f33bd762aaef2bb64da/Items/118665",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "BackdropImageTags[]",
+          "emby": "str"
+        },
+        {
+          "path": "Chapters[].ChapterIndex",
+          "emby": "int"
+        },
+        {
+          "path": "Chapters[].MarkerType",
+          "emby": "str"
+        },
+        {
+          "path": "Chapters[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "Chapters[].StartPositionTicks",
+          "emby": "int"
+        },
+        {
+          "path": "CommunityRating",
+          "emby": "float"
+        },
+        {
+          "path": "ExternalUrls[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "ExternalUrls[].Url",
+          "emby": "str"
+        },
+        {
+          "path": "GenreItems",
+          "emby": "array[2]"
+        },
+        {
+          "path": "GenreItems[].Id",
+          "emby": "int"
+        },
+        {
+          "path": "GenreItems[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "Genres",
+          "emby": "array[2]"
+        },
+        {
+          "path": "Genres[]",
+          "emby": "str"
+        },
+        {
+          "path": "Height",
+          "emby": "int"
+        },
+        {
+          "path": "ImageTags.Logo",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].Chapters[].ChapterIndex",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].Chapters[].MarkerType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].Chapters[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].Chapters[].StartPositionTicks",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].DefaultAudioStreamIndex",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].AspectRatio",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].AverageFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].BitDepth",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].BitRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Codec",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].DisplayLanguage",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].DisplayTitle",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoSubType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoSubTypeDescription",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Height",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsDefault",
+          "emby": "bool=true"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsForced",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Language",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Level",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].PixelFormat",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Profile",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].RealFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].RefFrames",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].TimeBase",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].VideoRange",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Width",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].AspectRatio",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].AverageFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].BitDepth",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].BitRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].Codec",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].DisplayLanguage",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].DisplayTitle",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].ExtendedVideoSubType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].ExtendedVideoSubTypeDescription",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].ExtendedVideoType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].Height",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].IsDefault",
+          "emby": "bool=true"
+        },
+        {
+          "path": "MediaStreams[].IsForced",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaStreams[].Language",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].Level",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].PixelFormat",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].Profile",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].RealFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].RefFrames",
+          "emby": "int"
+        },
+        {
+          "path": "MediaStreams[].TimeBase",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].VideoRange",
+          "emby": "str"
+        },
+        {
+          "path": "MediaStreams[].Width",
+          "emby": "int"
+        },
+        {
+          "path": "Overview",
+          "emby": "str"
+        },
+        {
+          "path": "People",
+          "emby": "array[16]"
+        },
+        {
+          "path": "People[].Id",
+          "emby": "str"
+        },
+        {
+          "path": "People[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "People[].PrimaryImageTag",
+          "emby": "str"
+        },
+        {
+          "path": "People[].Role",
+          "emby": "str"
+        },
+        {
+          "path": "People[].Type",
+          "emby": "str"
+        },
+        {
+          "path": "PremiereDate",
+          "emby": "str"
+        },
+        {
+          "path": "ProductionLocations[]",
+          "emby": "str"
+        },
+        {
+          "path": "ProductionYear",
+          "emby": "int"
+        },
+        {
+          "path": "ProviderIds",
+          "emby": "object"
+        },
+        {
+          "path": "ProviderIds.Imdb",
+          "emby": "str"
+        },
+        {
+          "path": "ProviderIds.Tmdb",
+          "emby": "str"
+        },
+        {
+          "path": "ProviderIds.Tvdb",
+          "emby": "str"
+        },
+        {
+          "path": "RemoteTrailers[].Url",
+          "emby": "str"
+        },
+        {
+          "path": "RunTimeTicks",
+          "emby": "int"
+        },
+        {
+          "path": "SortName",
+          "emby": "str"
+        },
+        {
+          "path": "Studios",
+          "emby": "array[5]"
+        },
+        {
+          "path": "Studios[].Id",
+          "emby": "int"
+        },
+        {
+          "path": "Studios[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "Width",
+          "emby": "int"
+        }
+      ],
+      "extra_in_nms": [
+        {
+          "path": "LocationType",
+          "ls": "str"
+        },
+        {
+          "path": "OfficialRating",
+          "ls": "str"
+        },
+        {
+          "path": "ParentBackdropImageTags",
+          "ls": "array[0]"
+        },
+        {
+          "path": "PlayAccess",
+          "ls": "str"
+        },
+        {
+          "path": "PrimaryImageTag",
+          "ls": "str"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "BackdropImageTags",
+          "ls": "array[0]",
+          "emby": "array[1]"
+        },
+        {
+          "path": "Chapters",
+          "ls": "array[0]",
+          "emby": "array[23]"
+        },
+        {
+          "path": "ExternalUrls",
+          "ls": "array[0]",
+          "emby": "array[4]"
+        },
+        {
+          "path": "MediaSources[].Chapters",
+          "ls": "array[0]",
+          "emby": "array[23]"
+        },
+        {
+          "path": "MediaSources[].IsRemote",
+          "ls": "bool=true",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams",
+          "ls": "array[1]",
+          "emby": "array[3]"
+        },
+        {
+          "path": "MediaSources[].RunTimeTicks",
+          "ls": "NoneType=null",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].SupportsTranscoding",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        },
+        {
+          "path": "MediaStreams",
+          "ls": "array[1]",
+          "emby": "array[3]"
+        },
+        {
+          "path": "ProductionLocations",
+          "ls": "array[0]",
+          "emby": "array[1]"
+        },
+        {
+          "path": "RemoteTrailers",
+          "ls": "array[0]",
+          "emby": "array[1]"
+        }
+      ]
+    },
+    {
+      "name": "/Items/{itemId}/PlaybackInfo?UserId={id}",
+      "ls_path": "/Items/3071/PlaybackInfo?UserId=019c850d-9322-77b0-ac18-f37f60886904",
+      "emby_path": "/Items/118665/PlaybackInfo?UserId=3919956675234f33bd762aaef2bb64da",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [
+        {
+          "path": "MediaSources[].AddApiKeyToDirectStreamUrl",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].Chapters",
+          "emby": "array[23]"
+        },
+        {
+          "path": "MediaSources[].Chapters[].ChapterIndex",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].Chapters[].MarkerType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].Chapters[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].Chapters[].StartPositionTicks",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].DefaultAudioStreamIndex",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].Formats",
+          "emby": "array[0]"
+        },
+        {
+          "path": "MediaSources[].HasMixedProtocols",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].IsInfiniteStream",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].IsRemote",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].ItemId",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].AspectRatio",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].AttachmentSize",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].AverageFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].BitDepth",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].BitRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Codec",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].DisplayLanguage",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].DisplayTitle",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoSubType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoSubTypeDescription",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].ExtendedVideoType",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Height",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsAnamorphic",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsDefault",
+          "emby": "bool=true"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsForced",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsHearingImpaired",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsInterlaced",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].IsTextSubtitleStream",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Language",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Level",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].PixelFormat",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Profile",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Protocol",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].RealFrameRate",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].RefFrames",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].SupportsExternalStream",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].TimeBase",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].VideoRange",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].MediaStreams[].Width",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].Name",
+          "emby": "str"
+        },
+        {
+          "path": "MediaSources[].ReadAtNativeFramerate",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].RequiredHttpHeaders",
+          "emby": "object"
+        },
+        {
+          "path": "MediaSources[].RequiresClosing",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].RequiresLooping",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].RequiresOpening",
+          "emby": "bool=false"
+        },
+        {
+          "path": "MediaSources[].Size",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].SupportsProbing",
+          "emby": "bool=true"
+        },
+        {
+          "path": "MediaSources[].Type",
+          "emby": "str"
+        }
+      ],
+      "extra_in_nms": [],
+      "type_mismatch": [
+        {
+          "path": "MediaSources[].Bitrate",
+          "ls": "NoneType=null",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].MediaStreams",
+          "ls": "array[1]",
+          "emby": "array[3]"
+        },
+        {
+          "path": "MediaSources[].RunTimeTicks",
+          "ls": "NoneType=null",
+          "emby": "int"
+        },
+        {
+          "path": "MediaSources[].SupportsTranscoding",
+          "ls": "bool=false",
+          "emby": "bool=true"
+        }
+      ]
+    },
+    {
+      "name": "/Users/Public",
+      "ls_path": "/Users/Public",
+      "emby_path": "/Users/Public",
+      "ls_status": 200,
+      "emby_status": 200,
+      "missing_in_nms": [],
+      "extra_in_nms": [
+        {
+          "path": "[].Configuration",
+          "ls": "object"
+        },
+        {
+          "path": "[].Configuration.DisplayMissingEpisodes",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Configuration.EnableLocalPassword",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Configuration.EnableNextEpisodeAutoPlay",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Configuration.HidePlayedInLatest",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Configuration.HidePlayedInMoreLikeThis",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Configuration.HidePlayedInSuggestions",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Configuration.IntroSkipMode",
+          "ls": "str"
+        },
+        {
+          "path": "[].Configuration.LatestItemsExcludes",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Configuration.MyMediaExcludes",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Configuration.OrderedViews",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Configuration.PlayDefaultAudioTrack",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Configuration.RememberAudioSelections",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Configuration.RememberSubtitleSelections",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Configuration.ResumeRewindSeconds",
+          "ls": "int"
+        },
+        {
+          "path": "[].Configuration.SubtitleMode",
+          "ls": "str"
+        },
+        {
+          "path": "[].EnableAutoLogin",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].HasConfiguredEasyPassword",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].HasConfiguredPassword",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].HasPassword",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Id",
+          "ls": "str"
+        },
+        {
+          "path": "[].Name",
+          "ls": "str"
+        },
+        {
+          "path": "[].Policy",
+          "ls": "object"
+        },
+        {
+          "path": "[].Policy.AccessSchedules",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.AllowCameraUpload",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.AllowSharingPersonalItems",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.AllowTagOrRating",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.AuthenticationProviderId",
+          "ls": "str"
+        },
+        {
+          "path": "[].Policy.BlockUnratedItems",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.BlockedTags",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.EnableAllChannels",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableAllDevices",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableAllFolders",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableAudioPlaybackTranscoding",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableContentDeletion",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableContentDeletionFromFolders",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.EnableContentDownloading",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableLiveTvAccess",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableLiveTvManagement",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableMediaConversion",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableMediaPlayback",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnablePlaybackRemuxing",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnablePublicSharing",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableRemoteAccess",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableRemoteControlOfOtherUsers",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.EnableSharedDeviceControl",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableSubtitleDownloading",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableSubtitleManagement",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableSyncTranscoding",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableUserPreferenceAccess",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnableVideoPlaybackTranscoding",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.EnabledChannels",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.EnabledDevices",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.EnabledFolders",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.ExcludedSubFolders",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.IncludeTags",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.InvalidLoginAttemptCount",
+          "ls": "int"
+        },
+        {
+          "path": "[].Policy.IsAdministrator",
+          "ls": "bool=true"
+        },
+        {
+          "path": "[].Policy.IsDisabled",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.IsHidden",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.IsHiddenFromUnusedDevices",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.IsHiddenRemotely",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.IsTagBlockingModeInclusive",
+          "ls": "bool=false"
+        },
+        {
+          "path": "[].Policy.LockedOutDate",
+          "ls": "int"
+        },
+        {
+          "path": "[].Policy.RemoteClientBitrateLimit",
+          "ls": "int"
+        },
+        {
+          "path": "[].Policy.RestrictedFeatures",
+          "ls": "array[0]"
+        },
+        {
+          "path": "[].Policy.Role",
+          "ls": "str"
+        },
+        {
+          "path": "[].Policy.SimultaneousStreamLimit",
+          "ls": "int"
+        },
+        {
+          "path": "[].ServerId",
+          "ls": "str"
+        },
+        {
+          "path": "[].ServerName",
+          "ls": "str"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "path": "(root)",
+          "ls": "array[2]",
+          "emby": "array[0]"
+        }
+      ]
+    }
+  ]
+}

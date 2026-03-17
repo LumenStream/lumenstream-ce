@@ -1,0 +1,84 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import HeaderAccountEntry from "@/islands/navigation/HeaderAccountEntry";
+import NotificationCenter from "@/islands/navigation/NotificationCenter";
+import ThemeToggle from "@/islands/navigation/ThemeToggle";
+import { GlobalSearchBox } from "@/islands/navigation/GlobalSearchBox";
+import { LibrarySwitcher } from "@/islands/navigation/LibrarySwitcher";
+import { FloatingDock } from "@/components/navigation/FloatingDock";
+
+interface Props {
+  title?: string;
+  active?: "home" | "search" | "playlists" | "requests" | "profile";
+}
+
+const { title = "LumenStream Web", active = "home" } = Astro.props;
+
+// Check if current page is admin page (hide dock on admin pages)
+const pathname = Astro.url.pathname;
+const isAdminPage = pathname.startsWith("/admin");
+const isSearchPage = active === "search";
+---
+
+<BaseLayout title={title}>
+  {/* Sticky cinematic header */}
+  <header class="fixed top-0 right-0 left-0 z-40">
+    <div
+      class="light:from-white/90 light:via-white/60 light:to-transparent pointer-events-none absolute inset-0 bg-gradient-to-b from-black/85 via-black/50 to-transparent"
+    >
+    </div>
+    <div class="pointer-events-none absolute inset-0 backdrop-blur-lg"></div>
+    <div
+      class="relative mx-auto flex h-[4.5rem] max-w-full items-center justify-between px-4 sm:px-6 lg:px-8"
+    >
+      <div class="flex min-w-0 flex-1 items-center justify-start gap-3">
+        <div
+          class="light:bg-black/8 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/12 sm:h-9 sm:w-9"
+        >
+          <span class="light:text-foreground text-xs font-semibold text-white/95 sm:text-sm">N</span
+          >
+        </div>
+        <div class="min-w-0">
+          <h1
+            class="light:text-foreground truncate text-xs font-semibold tracking-[0.12em] text-white/88 uppercase sm:text-sm"
+          >
+            LumenStream Web
+          </h1>
+        </div>
+      </div>
+
+      {/* Global Search Box - hidden on search page and small viewports */}
+      {
+        !isAdminPage && !isSearchPage ? (
+          <div class="hidden min-w-0 flex-[2] px-4 md:flex md:justify-center">
+            <GlobalSearchBox client:load />
+          </div>
+        ) : !isAdminPage ? (
+          <div class="flex-[2]" />
+        ) : null
+      }
+
+      <div class="flex flex-1 items-center justify-end gap-1.5 sm:gap-2">
+        {!isAdminPage && <LibrarySwitcher client:load />}
+        <ThemeToggle client:load />
+        <NotificationCenter client:load />
+        <HeaderAccountEntry
+          client:load
+          extraLink={{ href: "/admin/overview", label: "管理后台" }}
+        />
+      </div>
+    </div>
+  </header>
+
+  {/* Main content with max width and bottom padding for dock */}
+  <main
+    class="min-h-screen overflow-x-clip pt-24 pb-[calc(7rem+env(safe-area-inset-bottom,0px))] sm:pb-24 lg:pb-28"
+  >
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <slot />
+    </div>
+  </main>
+
+  {/* Floating dock navigation - only show on user pages, not admin pages */}
+  {!isAdminPage && <FloatingDock client:load active={active} />}
+</BaseLayout>

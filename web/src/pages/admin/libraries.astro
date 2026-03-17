@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminLibrariesPanel } from "@/islands/admin/AdminLibrariesPanel";
+---
+
+<AdminLayout title="媒体库管理 - LumenStream Web" active="libraries">
+  <AdminLibrariesPanel client:load />
+</AdminLayout>

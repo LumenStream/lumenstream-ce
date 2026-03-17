@@ -1,0 +1,12 @@
+---
+import AppLayout from "@/layouts/AppLayout.astro";
+import { LibraryBrowser } from "@/islands/media/LibraryBrowser";
+
+export function getStaticPaths() {
+  return [{ params: { slug: undefined } }];
+}
+---
+
+<AppLayout title="媒体库 - LumenStream Web" active="home">
+  <LibraryBrowser client:load />
+</AppLayout>

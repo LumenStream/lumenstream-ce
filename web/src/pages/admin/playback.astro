@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminPlaybackPanel } from "@/islands/admin/AdminPlaybackPanel";
+---
+
+<AdminLayout title="推流与域名 - LumenStream Web" active="playback">
+  <AdminPlaybackPanel client:load />
+</AdminLayout>

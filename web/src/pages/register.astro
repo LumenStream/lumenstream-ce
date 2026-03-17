@@ -1,0 +1,22 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { RegisterForm } from "@/islands/auth/RegisterForm";
+import { AuthRedirect } from "@/islands/landing/AuthRedirect";
+---
+
+<BaseLayout title="注册 - LumenStream Web" description="LumenStream Web 注册入口">
+  <AuthRedirect client:load />
+
+  <main
+    class="mx-auto flex min-h-screen w-full max-w-5xl flex-col items-center justify-center gap-8 px-4 py-10"
+  >
+    <div class="space-y-2 text-center">
+      <p class="text-xs tracking-wide text-neutral-400 uppercase">LumenStream Media Server</p>
+      <h1 class="text-3xl font-semibold">LumenStream Web</h1>
+      <p class="text-muted-foreground text-sm">邀请码注册</p>
+      <a class="text-xs text-rose-300 hover:text-rose-200" href="/">返回首页</a>
+    </div>
+
+    <RegisterForm client:load />
+  </main>
+</BaseLayout>

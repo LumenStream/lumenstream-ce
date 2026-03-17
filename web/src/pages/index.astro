@@ -1,0 +1,57 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { HeroSection } from "@/islands/landing/HeroSection";
+import { ContentStatsSection } from "@/islands/landing/ContentStatsSection";
+import { SpeedShowcaseSection } from "@/islands/landing/SpeedShowcaseSection";
+import { ArchitectureSection } from "@/islands/landing/ArchitectureSection";
+import { PricingCompareSection } from "@/islands/landing/PricingCompareSection";
+import { ParticleField } from "@/components/effects/ParticleField";
+import { SpotlightCursor } from "@/components/effects/SpotlightCursor";
+import { AuthRedirect } from "@/islands/landing/AuthRedirect";
+---
+
+<BaseLayout
+  title="LumenStream - 海量资源，极速体验"
+  description="10000+ 部高清影视资源，800Mbps 极速播放，按量计费超高性价比，让您畅享无忧的观影体验。"
+>
+  <AuthRedirect client:load />
+
+  {/* Global effects - only render on client */}
+  <SpotlightCursor client:load />
+  <ParticleField client:idle />
+
+  <main class="relative min-h-screen overflow-hidden">
+    {/* Hero Section */}
+    <HeroSection client:load />
+
+    {/* Content Stats Section */}
+    <ContentStatsSection client:visible />
+
+    {/* Speed Showcase Section */}
+    <SpeedShowcaseSection client:visible />
+
+    {/* Architecture Section */}
+    <ArchitectureSection client:visible />
+
+    {/* Pricing Compare Section */}
+    <PricingCompareSection client:visible />
+
+    {/* Footer */}
+    <footer class="border-border bg-card/50 relative border-t px-4 py-12 backdrop-blur-sm">
+      <div class="mx-auto max-w-6xl">
+        <div class="flex flex-col items-center justify-between gap-4 sm:flex-row">
+          <div class="text-center sm:text-left">
+            <p class="text-foreground text-lg font-semibold">LumenStream</p>
+            <p class="text-muted-foreground text-sm">LumenStream Media Server</p>
+          </div>
+          <div class="text-muted-foreground flex flex-wrap justify-center gap-6 text-sm">
+            <a href="/app/home" class="hover:text-primary transition-colors">用户端</a>
+            <a href="/admin/overview" class="hover:text-primary transition-colors">管理端</a>
+            <a href="/app/store" class="hover:text-primary transition-colors">套餐商店</a>
+          </div>
+          <p class="text-muted-foreground/70 text-sm">© 2024 LumenStream. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+  </main>
+</BaseLayout>

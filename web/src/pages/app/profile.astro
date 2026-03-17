@@ -1,0 +1,8 @@
+---
+import AppLayout from "@/layouts/AppLayout.astro";
+import { ProfilePanel } from "@/islands/media/ProfilePanel";
+---
+
+<AppLayout title="账户 - LumenStream Web" active="profile">
+  <ProfilePanel client:load />
+</AppLayout>

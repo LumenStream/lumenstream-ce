@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminSessionsPanel } from "@/islands/admin/AdminSessionsPanel";
+---
+
+<AdminLayout title="会话管理 - LumenStream Web" active="sessions">
+  <AdminSessionsPanel client:load />
+</AdminLayout>

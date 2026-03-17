@@ -1,0 +1,66 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import HeaderAccountEntry from "@/islands/navigation/HeaderAccountEntry";
+import { AdminNavigation } from "@/islands/navigation/AdminNavigation";
+import NotificationCenter from "@/islands/navigation/NotificationCenter";
+import ThemeToggle from "@/islands/navigation/ThemeToggle";
+import { FloatingDock } from "@/components/navigation/FloatingDock";
+import type { AdminNavItemId } from "@/lib/edition/capabilities";
+
+interface Props {
+  title?: string;
+  active?: AdminNavItemId;
+}
+
+const { title = "LumenStream Admin", active = "overview" } = Astro.props;
+---
+
+<BaseLayout title={title}>
+  {/* Sticky cinematic header */}
+  <header class="fixed top-0 right-0 left-0 z-40">
+    <div
+      class="light:from-white/90 light:via-white/60 light:to-transparent pointer-events-none absolute inset-0 bg-gradient-to-b from-black/88 via-black/55 to-transparent"
+    >
+    </div>
+    <div class="pointer-events-none absolute inset-0 backdrop-blur-lg"></div>
+    <div
+      class="relative mx-auto flex h-[4.5rem] max-w-full items-center justify-between px-4 sm:px-6 lg:px-8"
+    >
+      <div class="flex min-w-0 items-center gap-3">
+        <div
+          class="light:bg-black/8 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/12 sm:h-9 sm:w-9"
+        >
+          <span class="light:text-foreground text-xs font-semibold text-white/95 sm:text-sm">N</span
+          >
+        </div>
+        <div class="min-w-0">
+          <h1
+            class="light:text-foreground truncate text-xs font-semibold tracking-[0.12em] text-white/88 uppercase sm:text-sm"
+          >
+            LumenStream Admin
+          </h1>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5 sm:gap-2">
+        <ThemeToggle client:load />
+        <NotificationCenter client:load />
+        <HeaderAccountEntry client:load extraLink={{ href: "/app/home", label: "返回用户端" }} />
+      </div>
+    </div>
+  </header>
+
+  <div
+    class="mx-auto min-h-screen w-full max-w-7xl overflow-x-clip px-4 pt-24 pb-28 sm:px-6 sm:pb-24 lg:pb-28"
+  >
+    <div class="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <AdminNavigation client:load active={active} />
+      <main class="min-w-0">
+        <slot />
+      </main>
+    </div>
+  </div>
+
+  {/* Floating dock navigation */}
+  <FloatingDock client:load active="admin" />
+</BaseLayout>

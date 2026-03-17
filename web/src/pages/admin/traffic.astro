@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminTrafficPage } from "@/islands/edition/AdminTrafficPage";
+---
+
+<AdminLayout title="流量管理 - LumenStream Web" active="traffic">
+  <AdminTrafficPage client:load />
+</AdminLayout>

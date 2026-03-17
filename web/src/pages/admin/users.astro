@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminUsersPanel } from "@/islands/admin/AdminUsersPanel";
+---
+
+<AdminLayout title="用户管理 - LumenStream Web" active="users">
+  <AdminUsersPanel client:load />
+</AdminLayout>

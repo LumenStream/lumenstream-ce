@@ -1,0 +1,23 @@
+# Bootstrap config: only database settings are read from file/env.
+# All non-database settings are managed via Web Admin API (/admin/settings).
+# Security bootstrap: when no admin user exists, set
+# LS_BOOTSTRAP_ADMIN_USER and LS_BOOTSTRAP_ADMIN_PASSWORD explicitly.
+# Agent / MoviePilot can also be overridden at startup via environment:
+# LS_AGENT_ENABLED
+# LS_AGENT_MISSING_SCAN_ENABLED
+# LS_AGENT_MOVIEPILOT_ENABLED
+# LS_AGENT_MOVIEPILOT_BASE_URL
+# LS_AGENT_MOVIEPILOT_USERNAME
+# LS_AGENT_MOVIEPILOT_PASSWORD
+# Edition / capability split can be overridden via environment:
+# LS_EDITION=ce|ee
+# LS_EDITION_BILLING_ENABLED
+# LS_EDITION_ADVANCED_TRAFFIC_CONTROLS_ENABLED
+# LS_EDITION_INVITE_REWARDS_ENABLED
+# LS_EDITION_AUDIT_LOG_EXPORT_ENABLED
+# LS_EDITION_REQUEST_AGENT_ENABLED
+# LS_EDITION_PLAYBACK_ROUTING_ENABLED
+
+database:
+  url: "postgres://postgres:postgres@127.0.0.1:5432/lumenstream"
+  max_connections: 20

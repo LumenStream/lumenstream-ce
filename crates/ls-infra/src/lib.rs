@@ -1,0 +1,35 @@
+mod auth;
+mod billing;
+mod db;
+pub mod scanner;
+pub mod scheduler;
+mod search;
+
+// Split monolithic infrastructure implementation into focused source units.
+include!("infra/prelude.rs");
+include!("infra/app_core.rs");
+include!("infra/helpers_edition.rs");
+include!("infra/app_auth_tokens.rs");
+include!("infra/app_users_profile.rs");
+include!("infra/app_users_policy_traffic.rs");
+include!("infra/app_invite.rs");
+include!("infra/app_sessions_audit.rs");
+include!("infra/app_media_root_search.rs");
+include!("infra/app_media_filters_items.rs");
+include!("infra/app_media_playback_stream.rs");
+include!("infra/app_libraries_storage_domains.rs");
+include!("infra/app_playlists_redirect.rs");
+include!("infra/app_lumenbackend_cache_admin.rs");
+include!("infra/app_jobs_queue.rs");
+include!("infra/app_jobs_scan_tmdb_core.rs");
+include!("infra/app_jobs_tmdb_fill.rs");
+include!("infra/app_scraper.rs");
+include!("infra/app_jobs_maintenance_tail.rs");
+include!("infra/app_agent_requests.rs");
+include!("infra/app_user_notifications.rs");
+include!("infra/mappers_user_media.rs");
+include!("infra/db_rows_user_playlist.rs");
+include!("infra/db_rows_system.rs");
+include!("infra/utils_tasks_lumenbackend.rs");
+include!("infra/utils_tmdb_nfo.rs");
+include!("infra/tests.rs");

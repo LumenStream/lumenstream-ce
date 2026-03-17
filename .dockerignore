@@ -1,0 +1,14 @@
+.git
+.github
+.artifacts
+
+target/**
+!target/release/ls-app
+**/*.rs.bk
+
+web/node_modules
+web/.astro
+web/dist
+web/coverage
+
+.DS_Store

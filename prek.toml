@@ -1,0 +1,15 @@
+#:schema: https://www.schemastore.org/prek.json
+# Prek pre-commit checks for lumenstream.
+
+default_install_hook_types = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "fmt-check", name = "just fmt-check", entry = "just fmt-check", language = "system", pass_filenames = false, always_run = true },
+    { id = "test", name = "just test", entry = "just test", language = "system", pass_filenames = false, always_run = true },
+    { id = "web-check", name = "just web-check", entry = "just web-check", language = "system", pass_filenames = false, always_run = true },
+    { id = "web-test", name = "just web-test", entry = "just web-test", language = "system", pass_filenames = false, always_run = true },
+    { id = "web-lint", name = "just web-lint", entry = "just web-lint", language = "system", pass_filenames = false, always_run = true },
+    { id = "web-fmt-check", name = "just web-fmt-check", entry = "just web-fmt-check", language = "system", pass_filenames = false, always_run = true },
+]

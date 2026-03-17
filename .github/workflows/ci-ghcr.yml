@@ -1,0 +1,76 @@
+name: rust-ci-ghcr
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust format check
+        run: |
+          . /home/github-runner/.cargo/env
+          cargo fmt --all -- --check
+
+      - name: Rust tests
+        run: |
+          . /home/github-runner/.cargo/env
+          cargo test --workspace
+
+      - name: Script syntax check
+        run: |
+          . /home/github-runner/.cargo/env
+          if [ -f ../scripts/contract_test_api.sh ] && [ -f ../scripts/replay_client_callchains.sh ]; then
+            bash -n \
+              ../scripts/contract_test_api.sh \
+              ../scripts/replay_client_callchains.sh \
+              scripts/repo_split_common.sh \
+              scripts/export_ce_upstream.sh \
+              scripts/init_commercial_downstream.sh \
+              scripts/cut_split_repositories.sh \
+              scripts/sync_from_ce_upstream.sh \
+              docker/fullstack-entrypoint.sh \
+              docker/web-entrypoint.sh \
+              docker/write-web-runtime-config.sh
+          else
+            echo "skip part of script syntax check: ../scripts/*.sh not found in this checkout"
+            bash -n docker/fullstack-entrypoint.sh docker/web-entrypoint.sh docker/write-web-runtime-config.sh
+          fi
+
+      - name: Build release binary
+        run: |
+          . /home/github-runner/.cargo/env
+          cargo build --release -p ls-app && strip target/release/ls-app
+
+      - name: Build local image
+        if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: |
+          docker build -t lumenstream-fullstack:local -f ./Dockerfile.fullstack .
+
+      - name: Deploy via Docker Compose
+        if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: |
+          # 确保环境变量被传递给 docker compose
+          export LS_FULLSTACK_IMAGE=lumenstream-fullstack:local
+          
+          # 进入 compose 目录并启动
+          cd /opt/services/lumenstream
+          docker compose up -d lumenstream
+          
+          # 可选：清理悬空的旧镜像以释放空间
+          docker image prune -f

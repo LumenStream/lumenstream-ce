@@ -1,0 +1,8 @@
+---
+import AppLayout from "@/layouts/AppLayout.astro";
+import { HomeDashboard } from "@/islands/media/HomeDashboard";
+---
+
+<AppLayout title="首页 - LumenStream Web" active="home">
+  <HomeDashboard client:load />
+</AppLayout>

@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminScraperPanel } from "@/islands/admin/AdminScraperPanel";
+---
+
+<AdminLayout title="刮削系统管理 - LumenStream Web" active="scraper">
+  <AdminScraperPanel client:load />
+</AdminLayout>

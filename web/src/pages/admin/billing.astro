@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminBillingPage } from "@/islands/edition/AdminBillingPage";
+---
+
+<AdminLayout title="账单管理 - LumenStream Web" active="billing">
+  <AdminBillingPage client:load />
+</AdminLayout>

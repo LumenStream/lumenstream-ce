@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+config.yaml
+.env
+# web frontend
+web/node_modules
+web/.astro
+web/dist
+web/coverage
+# compat test scripts
+scripts/compare_endpoint.py
+scripts/ls_db_query.py

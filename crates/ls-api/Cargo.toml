@@ -1,0 +1,30 @@
+[package]
+name = "ls-api"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rust_decimal = { workspace = true }
+anyhow = { workspace = true }
+actix-cors = { workspace = true }
+actix-web = { workspace = true }
+actix-ws = { workspace = true }
+chrono = { workspace = true }
+cron = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+reqwest = { workspace = true }
+async-stream = { workspace = true }
+futures-util = { workspace = true }
+urlencoding = { workspace = true }
+
+ls-config = { path = "../ls-config" }
+ls-agent = { path = "../ls-agent" }
+ls-domain = { path = "../ls-domain" }
+ls-infra = { path = "../ls-infra" }
+ls-logging = { path = "../ls-logging" }

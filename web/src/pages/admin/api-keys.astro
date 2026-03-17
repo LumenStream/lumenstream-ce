@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminApiKeysPanel } from "@/islands/admin/AdminApiKeysPanel";
+---
+
+<AdminLayout title="API Keys - LumenStream Web" active="api-keys">
+  <AdminApiKeysPanel client:load />
+</AdminLayout>

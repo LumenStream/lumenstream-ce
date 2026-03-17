@@ -1,0 +1,8 @@
+---
+import AdminLayout from "@/layouts/AdminLayout.astro";
+import { AdminAuditLogsPanel } from "@/islands/admin/AdminAuditLogsPanel";
+---
+
+<AdminLayout title="审计日志 - LumenStream Web" active="audit-logs">
+  <AdminAuditLogsPanel client:load />
+</AdminLayout>

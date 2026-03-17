@@ -1,0 +1,12 @@
+---
+import AppLayout from "@/layouts/AppLayout.astro";
+import { PersonDetail } from "@/islands/media/PersonDetail";
+
+export function getStaticPaths() {
+  return [{ params: { slug: undefined } }];
+}
+---
+
+<AppLayout title="人物详情 - LumenStream Web" active="search">
+  <PersonDetail client:load />
+</AppLayout>

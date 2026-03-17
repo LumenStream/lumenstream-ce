@@ -1,0 +1,52 @@
+[workspace]
+members = [
+  "crates/ls-agent",
+  "crates/ls-app",
+  "crates/ls-api",
+  "crates/ls-config",
+  "crates/ls-domain",
+  "crates/ls-infra",
+  "crates/ls-logging",
+  "crates/ls-scraper",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1.0"
+actix-cors = "0.7"
+actix-web = "4.11"
+actix-ws = "0.3"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+cron = "0.12"
+hex = "0.4"
+rand = "0.9"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "rust_decimal"] }
+thiserror = "2.0"
+tokio = { version = "1.43", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1.11", features = ["v4", "v5", "v7", "serde"] }
+walkdir = "2.5"
+sha2 = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+urlencoding = "2.1"
+pinyin = "0.11"
+unicode-normalization = "0.1"
+meilisearch-sdk = "0.32"
+rust_decimal = { version = "1.36", features = ["serde"] }
+md5 = "0.7"
+async-stream = "0.3"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
