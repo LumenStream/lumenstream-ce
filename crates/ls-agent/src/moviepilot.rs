@@ -21,6 +21,16 @@ pub struct MoviePilotResponse {
     pub data: Value,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MoviePilotExactSearchQuery {
+    pub media_type: Option<String>,
+    pub area: Option<String>,
+    pub title: Option<String>,
+    pub year: Option<String>,
+    pub season: Option<i32>,
+    pub sites: Vec<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MoviePilotContext {
     #[serde(default)]
@@ -243,11 +253,71 @@ impl MoviePilotClient {
     pub async fn search_by_tmdb(
         &mut self,
         tmdb_id: i64,
-        season: Option<i32>,
+        query: &MoviePilotExactSearchQuery,
     ) -> anyhow::Result<MoviePilotResponse> {
         let mut url = format!("{}/api/v1/search/media/tmdb:{tmdb_id}", self.base_url);
-        if let Some(season) = season.filter(|value| *value > 0) {
-            url.push_str(&format!("?season={season}"));
+        let mut params = Vec::<(String, String)>::new();
+        if let Some(media_type) = query
+            .media_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.push(("mtype".to_string(), media_type.to_string()));
+        }
+        if let Some(area) = query
+            .area
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.push(("area".to_string(), area.to_string()));
+        }
+        if let Some(title) = query
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.push(("title".to_string(), title.to_string()));
+        }
+        if let Some(year) = query
+            .year
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.push(("year".to_string(), year.to_string()));
+        }
+        if let Some(season) = query.season.filter(|value| *value > 0) {
+            params.push(("season".to_string(), season.to_string()));
+        }
+        if !query.sites.is_empty() {
+            params.push((
+                "sites".to_string(),
+                query
+                    .sites
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ));
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(
+                &params
+                    .iter()
+                    .map(|(key, value)| {
+                        format!(
+                            "{}={}",
+                            urlencoding::encode(key),
+                            urlencoding::encode(value)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            );
         }
         self.get_json(url).await
     }
@@ -256,6 +326,27 @@ impl MoviePilotClient {
         let encoded = urlencoding::encode(title.trim());
         let url = format!("{}/api/v1/search/title?keyword={encoded}", self.base_url);
         self.get_json(url).await
+    }
+
+    pub async fn get_indexer_sites(&mut self) -> anyhow::Result<Vec<i32>> {
+        let response = self
+            .get_json(format!(
+                "{}/api/v1/system/setting/IndexerSites",
+                self.base_url
+            ))
+            .await?;
+
+        let value = response
+            .data
+            .get("value")
+            .cloned()
+            .unwrap_or_else(|| response.data.clone());
+        Ok(value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.as_i64().map(|value| value as i32))
+            .collect())
     }
 
     pub async fn create_subscription(

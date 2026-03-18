@@ -133,6 +133,7 @@ struct AgentMoviePilotSearchOutcome {
     contexts: Vec<MoviePilotContext>,
     best: Option<MoviePilotContext>,
     requested_year: Option<String>,
+    exact_query: Option<MoviePilotExactSearchQuery>,
 }
 
 impl AppInfra {
@@ -943,84 +944,66 @@ LIMIT 1
     ) -> AgentMoviePilotSearchOutcome {
         let requested_year = tmdb
             .and_then(|meta| agent_tmdb_year(&meta.details))
-            .or_else(|| agent_extract_year_hints(&request.content).into_iter().next().map(|value| value.to_string()));
+            .or_else(|| {
+                agent_extract_year_hints(&request.content)
+                    .into_iter()
+                    .next()
+                    .map(|value| value.to_string())
+            });
         let effective_media_type = agent_effective_media_type(&request.media_type, tmdb);
         let mut outcome = AgentMoviePilotSearchOutcome {
             requested_year,
             ..Default::default()
         };
 
-        if let Some(tmdb_id) = request.tmdb_id.filter(|value| *value > 0) {
-            match moviepilot
-                .search_by_tmdb(tmdb_id, request.season_numbers.first().copied())
-                .await
-            {
-                Ok(response) => {
-                    let contexts = decode_search_contexts(&response.data);
-                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                        strategy: "tmdb".to_string(),
-                        query: tmdb_id.to_string(),
-                        success: true,
-                        result_count: contexts.len(),
-                        error: None,
-                    });
-                    agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
-                    outcome.best = choose_best_result(
-                        &outcome.contexts,
-                        effective_media_type,
-                        request.season_numbers.first().copied(),
-                        outcome.requested_year.as_deref(),
-                        filter,
-                    );
-                    if outcome.best.is_some() {
-                        return outcome;
-                    }
-                }
-                Err(err) => {
-                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                        strategy: "tmdb".to_string(),
-                        query: tmdb_id.to_string(),
-                        success: false,
-                        result_count: 0,
-                        error: Some(err.to_string()),
-                    });
-                }
-            }
-        }
+        let Some(tmdb_id) = request.tmdb_id.filter(|value| *value > 0) else {
+            outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                strategy: "tmdb_exact".to_string(),
+                query: request.title.clone(),
+                success: false,
+                result_count: 0,
+                error: Some("tmdb metadata missing".to_string()),
+            });
+            return outcome;
+        };
 
-        for title in agent_collect_moviepilot_titles(request, tmdb) {
-            match moviepilot.search_by_title(&title).await {
-                Ok(response) => {
-                    let contexts = decode_search_contexts(&response.data);
-                    let result_count = contexts.len();
-                    agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
-                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                        strategy: "title".to_string(),
-                        query: title,
-                        success: true,
-                        result_count,
-                        error: None,
-                    });
-                    outcome.best = choose_best_result(
-                        &outcome.contexts,
-                        effective_media_type,
-                        request.season_numbers.first().copied(),
-                        outcome.requested_year.as_deref(),
-                        filter,
-                    );
-                    if outcome.best.is_some() {
-                        return outcome;
-                    }
-                }
-                Err(err) => {
-                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                        strategy: "title".to_string(),
-                        query: title,
-                        success: false,
-                        result_count: 0,
-                        error: Some(err.to_string()),
-                    });
-                }
+        let sites = moviepilot.get_indexer_sites().await.unwrap_or_default();
+        let exact_query = agent_build_moviepilot_exact_query(
+            request,
+            tmdb,
+            effective_media_type,
+            outcome.requested_year.as_deref(),
+            sites,
+        );
+        let query_desc = agent_describe_moviepilot_exact_query(tmdb_id, &exact_query);
+        outcome.exact_query = Some(exact_query.clone());
+
+        match moviepilot.search_by_tmdb(tmdb_id, &exact_query).await {
+            Ok(response) => {
+                let contexts = decode_search_contexts(&response.data);
+                let result_count = contexts.len();
+                let error = if response.success {
+                    None
+                } else {
+                    response.message.clone().or_else(|| Some("moviepilot search failed".to_string()))
+                };
+                agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
+                outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                    strategy: "tmdb_exact".to_string(),
+                    query: query_desc,
+                    success: response.success,
+                    result_count,
+                    error,
+                });
+            }
+            Err(err) => {
+                outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                    strategy: "tmdb_exact".to_string(),
+                    query: query_desc,
+                    success: false,
+                    result_count: 0,
+                    error: Some(err.to_string()),
+                });
             }
         }
 
@@ -1111,6 +1094,33 @@ LIMIT 1
         } else {
             None
         };
+
+        if request.request_type == "media_request" && request.tmdb_id.unwrap_or_default() <= 0 {
+            let result = json!({
+                "error": "tmdb metadata not resolved",
+                "title": request.title,
+                "media_type": request.media_type,
+            });
+            self.update_request_state_with_event(
+                request_id,
+                USER_STATUS_ACTION_REQUIRED,
+                "review_required",
+                "metadata_enrich",
+                false,
+                &request.admin_note,
+                "未能匹配 TMDB 元数据，已转人工处理",
+                &result,
+                Some("tmdb metadata not resolved"),
+                None,
+                "agent.tmdb_resolve_failed",
+                None,
+                Some("system"),
+                "TMDB 元数据匹配失败",
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
+        }
 
         let workflow_kind = infer_workflow_kind(&request.request_type);
         let required_capabilities = workflow_required_capabilities(&workflow_kind)
@@ -1261,12 +1271,20 @@ LIMIT 1
         let best = search_outcome.best.clone();
         let mut result_payload = json!({
             "search_success": !contexts.is_empty(),
-            "search_message": if contexts.is_empty() { Some("no matching results".to_string()) } else { None::<String> },
+            "search_message": if contexts.is_empty() { agent_last_search_error(Some(&json!(search_outcome.attempts.clone()))) } else { None::<String> },
             "result_count": contexts.len(),
             "search_attempts": search_outcome.attempts,
             "requested_year": search_outcome.requested_year,
             "resolved_tmdb_id": tmdb_metadata.as_ref().map(|value| value.tmdb_id),
             "resolved_media_type": effective_media_type,
+            "exact_query": search_outcome.exact_query.as_ref().map(|query| json!({
+                "mtype": query.media_type,
+                "area": query.area,
+                "title": query.title,
+                "year": query.year,
+                "season": query.season,
+                "sites": query.sites,
+            })),
         });
 
         if contexts.is_empty() {
@@ -1901,6 +1919,14 @@ fn agent_effective_media_type<'a>(
     }
 }
 
+fn agent_moviepilot_media_type_label(media_type: &str) -> String {
+    if media_type.eq_ignore_ascii_case("movie") {
+        "电影".to_string()
+    } else {
+        "电视剧".to_string()
+    }
+}
+
 fn agent_collect_moviepilot_titles(
     request: &AgentRequest,
     tmdb: Option<&AgentResolvedTmdbMetadata>,
@@ -1914,6 +1940,60 @@ fn agent_collect_moviepilot_titles(
         }
     }
     agent_dedup_strings(titles)
+}
+
+fn agent_build_moviepilot_exact_query(
+    request: &AgentRequest,
+    tmdb: Option<&AgentResolvedTmdbMetadata>,
+    effective_media_type: &str,
+    requested_year: Option<&str>,
+    sites: Vec<i32>,
+) -> MoviePilotExactSearchQuery {
+    let mut titles = Vec::new();
+    if let Some(tmdb) = tmdb
+        && let Some(title) = agent_tmdb_primary_title(tmdb.kind, &tmdb.details)
+    {
+        titles.push(title);
+    }
+    titles.extend(agent_collect_moviepilot_titles(request, tmdb));
+    let title = agent_dedup_strings(titles).into_iter().next();
+
+    MoviePilotExactSearchQuery {
+        media_type: Some(agent_moviepilot_media_type_label(effective_media_type)),
+        area: Some("title".to_string()),
+        title,
+        year: requested_year.map(str::to_string),
+        season: request.season_numbers.first().copied(),
+        sites,
+    }
+}
+
+fn agent_describe_moviepilot_exact_query(
+    tmdb_id: i64,
+    query: &MoviePilotExactSearchQuery,
+) -> String {
+    let season = query
+        .season
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let sites = if query.sites.is_empty() {
+        String::new()
+    } else {
+        query
+            .sites
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!(
+        "tmdb:{tmdb_id}?mtype={}&area={}&title={}&year={}&season={season}&sites={sites}",
+        query.media_type.as_deref().unwrap_or_default(),
+        query.area.as_deref().unwrap_or_default(),
+        query.title.as_deref().unwrap_or_default(),
+        query.year.as_deref().unwrap_or_default(),
+    )
 }
 
 fn agent_dedup_strings(values: Vec<String>) -> Vec<String> {
@@ -2199,6 +2279,33 @@ mod agent_request_tests {
         assert_eq!(media.en_title, "Star Trek: Starfleet Academy");
         assert_eq!(media.year, "2026");
         assert_eq!(media.number_of_episodes, 10);
+    }
+
+    #[test]
+    fn moviepilot_exact_query_uses_resolved_tmdb_fields() {
+        let request = sample_request();
+        let tmdb = AgentResolvedTmdbMetadata {
+            kind: "tv",
+            tmdb_id: 294285,
+            details: json!({
+                "name": "南相思",
+                "first_air_date": "2026-01-01"
+            }),
+        };
+
+        let query = agent_build_moviepilot_exact_query(
+            &request,
+            Some(&tmdb),
+            "series",
+            Some("2026"),
+            vec![8, 10, 2, 6, 7],
+        );
+
+        assert_eq!(query.media_type.as_deref(), Some("电视剧"));
+        assert_eq!(query.area.as_deref(), Some("title"));
+        assert_eq!(query.title.as_deref(), Some("南相思"));
+        assert_eq!(query.year.as_deref(), Some("2026"));
+        assert_eq!(query.sites, vec![8, 10, 2, 6, 7]);
     }
 }
 

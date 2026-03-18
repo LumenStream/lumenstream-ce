@@ -9,7 +9,7 @@
 - Jellyfin / Emby 兼容核心 API
 - 媒体库管理、扫描、刮削、搜索
 - 用户登录、资料、会话、基础后台
-- Agent 求片工作流（TMDB 元数据优先匹配，MoviePilot 精确搜索失败后自动回退到标题多轮搜索）
+- Agent 求片工作流（本地 TMDB 元数据优先匹配，再按 MoviePilot 精确搜索接口拼接完整 query 执行一次站点搜索）
 - 播放域名、LumenBackend 推流与多端播放链路
 
 ## Commercial Edition (EE)
