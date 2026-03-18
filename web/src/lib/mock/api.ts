@@ -1246,12 +1246,14 @@ let settings: WebAppSettings = {
   },
   scan: {
     default_library_name: "Default Library",
+    local_media_exts: ["mp4", "mkv", "flv", "avi", "mov", "m4v", "ts", "m2ts", "wmv", "iso"],
     incremental_window_hours: 24,
   },
   storage: {
     lumenbackend_enabled: false,
     prefer_segment_gateway: false,
     lumenbackend_nodes: [],
+    local_stream_route: "v1/streams/local",
   },
   tmdb: {
     enabled: false,
@@ -1339,7 +1341,7 @@ let settings: WebAppSettings = {
 function currentSystemCapabilities(): AdminSystemCapabilities {
   return {
     edition: "ce",
-    strm_only_streaming: true,
+    strm_only_streaming: false,
     transcoding_enabled: false,
     billing_enabled: false,
     advanced_traffic_controls_enabled: false,
@@ -1349,6 +1351,7 @@ function currentSystemCapabilities(): AdminSystemCapabilities {
     playback_routing_enabled: true,
     supported_stream_features: [
       "strm-direct-play",
+      "local-file-range",
       "http-range",
       "segment-gateway",
       "distributed-fallback",
@@ -2229,7 +2232,7 @@ export async function mockGetSystemFlags(): Promise<AdminSystemFlags> {
     Boolean((settings.scraper as { enabled?: boolean }).enabled) ||
     Boolean((settings.tmdb as { enabled?: boolean }).enabled);
   return {
-    strm_only_streaming: true,
+    strm_only_streaming: false,
     transcoding_enabled: false,
     scraper_enabled: scraperEnabled,
     tmdb_enabled: scraperEnabled,

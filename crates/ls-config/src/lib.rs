@@ -151,6 +151,8 @@ pub struct ScanConfig {
     pub default_library_paths: Vec<String>,
     #[serde(default = "default_subtitle_exts")]
     pub subtitle_extensions: Vec<String>,
+    #[serde(default = "default_local_media_exts")]
+    pub local_media_exts: Vec<String>,
     #[serde(default = "default_scan_grace_seconds")]
     pub incremental_grace_seconds: i64,
     #[serde(default = "default_mediainfo_cache_dir")]
@@ -167,6 +169,8 @@ struct ScanConfigWire {
     default_library_path: String,
     #[serde(default = "default_subtitle_exts")]
     subtitle_extensions: Vec<String>,
+    #[serde(default = "default_local_media_exts")]
+    local_media_exts: Vec<String>,
     #[serde(default = "default_scan_grace_seconds")]
     incremental_grace_seconds: i64,
     #[serde(default = "default_mediainfo_cache_dir")]
@@ -201,6 +205,7 @@ impl<'de> Deserialize<'de> for ScanConfig {
             default_library_name: wire.default_library_name,
             default_library_paths,
             subtitle_extensions: wire.subtitle_extensions,
+            local_media_exts: normalize_local_media_exts(wire.local_media_exts),
             incremental_grace_seconds: wire.incremental_grace_seconds,
             mediainfo_cache_dir: wire.mediainfo_cache_dir,
         })
@@ -215,12 +220,30 @@ fn normalize_scan_library_path(raw: &str) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn normalize_media_extension(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+    if trimmed.is_empty() || trimmed == "strm" {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn normalize_local_media_exts(raw: Vec<String>) -> Vec<String> {
+    let mut dedup = HashSet::new();
+    raw.into_iter()
+        .filter_map(|item| normalize_media_extension(&item))
+        .filter(|item| dedup.insert(item.clone()))
+        .collect()
+}
+
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             default_library_name: default_library_name(),
             default_library_paths: Vec::new(),
             subtitle_extensions: default_subtitle_exts(),
+            local_media_exts: default_local_media_exts(),
             incremental_grace_seconds: default_scan_grace_seconds(),
             mediainfo_cache_dir: default_mediainfo_cache_dir(),
         }
@@ -249,6 +272,8 @@ pub struct StorageConfig {
     pub lumenbackend_nodes: Vec<String>,
     #[serde(default = "default_lumenbackend_route")]
     pub lumenbackend_route: String,
+    #[serde(default = "default_local_stream_route")]
+    pub local_stream_route: String,
     #[serde(default)]
     pub lumenbackend_stream_signing_key: String,
     #[serde(default = "default_lumenbackend_stream_token_ttl_seconds")]
@@ -268,6 +293,7 @@ impl Default for StorageConfig {
             lumenbackend_enabled: false,
             lumenbackend_nodes: Vec::new(),
             lumenbackend_route: default_lumenbackend_route(),
+            local_stream_route: default_local_stream_route(),
             lumenbackend_stream_signing_key: String::new(),
             lumenbackend_stream_token_ttl_seconds: default_lumenbackend_stream_token_ttl_seconds(),
         }
@@ -954,11 +980,7 @@ impl AppConfig {
         }
 
         if let Ok(v) = env::var("LS_CORS_ALLOW_ORIGINS") {
-            let origins: Vec<String> = v
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let origins = parse_string_list_env(&v);
             if !origins.is_empty() {
                 cfg.server.cors_allow_origins = origins;
             }
@@ -1114,9 +1136,41 @@ impl AppConfig {
             }
         }
 
+        if let Ok(v) = env::var("LS_LUMENBACKEND_ENABLED")
+            && let Some(parsed) = parse_bool_env(&v)
+        {
+            cfg.storage.lumenbackend_enabled = parsed;
+        }
+
+        if let Ok(v) = env::var("LS_LUMENBACKEND_NODES") {
+            let nodes = parse_string_list_env(&v);
+            if !nodes.is_empty() {
+                cfg.storage.lumenbackend_nodes = nodes;
+            }
+        }
+
+        if let Ok(v) = env::var("LS_LUMENBACKEND_ROUTE")
+            && !v.trim().is_empty()
+        {
+            cfg.storage.lumenbackend_route = v;
+        }
+
+        if let Ok(v) = env::var("LS_LOCAL_STREAM_ROUTE")
+            && !v.trim().is_empty()
+        {
+            cfg.storage.local_stream_route = v;
+        }
+
         if let Ok(v) = env::var("LS_LUMENBACKEND_STREAM_TOKEN_TTL_SECONDS") {
             if let Ok(parsed) = v.parse::<u64>() {
                 cfg.storage.lumenbackend_stream_token_ttl_seconds = parsed.max(1);
+            }
+        }
+
+        if let Ok(v) = env::var("LS_SCAN_LOCAL_MEDIA_EXTS") {
+            let values = parse_string_list_env(&v);
+            if !values.is_empty() {
+                cfg.scan.local_media_exts = normalize_local_media_exts(values);
             }
         }
 
@@ -1145,11 +1199,7 @@ impl AppConfig {
         }
 
         if let Ok(v) = env::var("LS_TRUSTED_PROXIES") {
-            let trusted_proxies = v
-                .split(',')
-                .map(|part| part.trim().to_string())
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>();
+            let trusted_proxies = parse_string_list_env(&v);
             cfg.security.trusted_proxies = trusted_proxies;
         }
 
@@ -1406,6 +1456,14 @@ fn parse_bool_env(raw: &str) -> Option<bool> {
     }
 }
 
+fn parse_string_list_env(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn normalize_money(raw: Decimal) -> Decimal {
     raw.round_dp(2)
 }
@@ -1536,6 +1594,15 @@ fn default_subtitle_exts() -> Vec<String> {
     ]
 }
 
+fn default_local_media_exts() -> Vec<String> {
+    [
+        "mp4", "mkv", "flv", "avi", "mov", "m4v", "ts", "m2ts", "wmv", "iso",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 fn default_scan_grace_seconds() -> i64 {
     30
 }
@@ -1554,6 +1621,10 @@ fn default_s3_cache_ttl_seconds() -> i64 {
 
 fn default_lumenbackend_route() -> String {
     "v1/streams/gdrive".to_string()
+}
+
+fn default_local_stream_route() -> String {
+    "v1/streams/local".to_string()
 }
 
 fn default_lumenbackend_stream_token_ttl_seconds() -> u64 {
@@ -1788,9 +1859,19 @@ mod tests {
         assert_eq!(cfg.auth.invite.invitee_bonus_amount, Decimal::ZERO);
         assert!(!cfg.auth.invite.inviter_rebate_enabled);
         assert_eq!(cfg.auth.invite.inviter_rebate_rate, Decimal::ZERO);
+        assert_eq!(
+            cfg.scan.local_media_exts,
+            vec![
+                "mp4", "mkv", "flv", "avi", "mov", "m4v", "ts", "m2ts", "wmv", "iso"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
         assert!(!cfg.storage.lumenbackend_enabled);
         assert!(cfg.storage.lumenbackend_nodes.is_empty());
         assert_eq!(cfg.storage.lumenbackend_route, "v1/streams/gdrive");
+        assert_eq!(cfg.storage.local_stream_route, "v1/streams/local");
         assert_eq!(cfg.storage.lumenbackend_stream_token_ttl_seconds, 24 * 3600);
         assert!(cfg.storage.lumenbackend_stream_signing_key.is_empty());
         assert!(!cfg.security.trust_x_forwarded_for);
@@ -1963,8 +2044,13 @@ auth:
             "LS_INVITEE_BONUS_AMOUNT",
             "LS_INVITER_REBATE_ENABLED",
             "LS_INVITER_REBATE_RATE",
+            "LS_LUMENBACKEND_ENABLED",
+            "LS_LUMENBACKEND_NODES",
+            "LS_LUMENBACKEND_ROUTE",
+            "LS_LOCAL_STREAM_ROUTE",
             "LS_LUMENBACKEND_STREAM_SIGNING_KEY",
             "LS_LUMENBACKEND_STREAM_TOKEN_TTL_SECONDS",
+            "LS_SCAN_LOCAL_MEDIA_EXTS",
             "LS_DEFAULT_USER_MAX_CONCURRENT_STREAMS",
             "LS_DEFAULT_USER_TRAFFIC_QUOTA_BYTES",
             "LS_DEFAULT_USER_TRAFFIC_WINDOW_DAYS",
@@ -2014,6 +2100,15 @@ auth:
         unsafe { env::set_var("LS_INVITEE_BONUS_AMOUNT", "8.88") };
         unsafe { env::set_var("LS_INVITER_REBATE_ENABLED", "1") };
         unsafe { env::set_var("LS_INVITER_REBATE_RATE", "0.13579") };
+        unsafe { env::set_var("LS_LUMENBACKEND_ENABLED", "true") };
+        unsafe {
+            env::set_var(
+                "LS_LUMENBACKEND_NODES",
+                "http://stream-gateway:8096, https://stream.example.com",
+            )
+        };
+        unsafe { env::set_var("LS_LUMENBACKEND_ROUTE", "v1/streams/gdrive") };
+        unsafe { env::set_var("LS_LOCAL_STREAM_ROUTE", "v1/streams/local") };
         unsafe {
             env::set_var(
                 "LS_LUMENBACKEND_STREAM_SIGNING_KEY",
@@ -2021,6 +2116,7 @@ auth:
             )
         };
         unsafe { env::set_var("LS_LUMENBACKEND_STREAM_TOKEN_TTL_SECONDS", "45") };
+        unsafe { env::set_var("LS_SCAN_LOCAL_MEDIA_EXTS", "mp4, mkv, .iso, strm") };
         unsafe { env::set_var("LS_DEFAULT_USER_MAX_CONCURRENT_STREAMS", "3") };
         unsafe { env::set_var("LS_DEFAULT_USER_TRAFFIC_QUOTA_BYTES", "123456") };
         unsafe { env::set_var("LS_DEFAULT_USER_TRAFFIC_WINDOW_DAYS", "15") };
@@ -2079,11 +2175,25 @@ auth:
         assert!(cfg.auth.invite.inviter_rebate_enabled);
         assert_eq!(cfg.auth.invite.inviter_rebate_rate, Decimal::new(1358, 4));
 
+        assert!(cfg.storage.lumenbackend_enabled);
+        assert_eq!(
+            cfg.storage.lumenbackend_nodes,
+            vec![
+                "http://stream-gateway:8096".to_string(),
+                "https://stream.example.com".to_string()
+            ]
+        );
+        assert_eq!(cfg.storage.lumenbackend_route, "v1/streams/gdrive");
+        assert_eq!(cfg.storage.local_stream_route, "v1/streams/local");
         assert_eq!(
             cfg.storage.lumenbackend_stream_signing_key,
             "ls-lumenbackend-secret"
         );
         assert_eq!(cfg.storage.lumenbackend_stream_token_ttl_seconds, 45);
+        assert_eq!(
+            cfg.scan.local_media_exts,
+            vec!["mp4".to_string(), "mkv".to_string(), "iso".to_string()]
+        );
         assert_eq!(cfg.security.default_user_max_concurrent_streams, 3);
         assert_eq!(cfg.security.default_user_traffic_quota_bytes, 123456);
         assert_eq!(cfg.security.default_user_traffic_window_days, 15);
@@ -2144,8 +2254,10 @@ auth:
         web.scraper.tvdb.api_key = "tvdb-key".to_string();
         web.scraper.bangumi.enabled = true;
         web.scraper.bangumi.access_token = "bgm-token".to_string();
+        web.scan.local_media_exts = vec!["mp4".to_string(), "mkv".to_string()];
         web.storage.lumenbackend_enabled = true;
         web.storage.lumenbackend_route = "cdn".to_string();
+        web.storage.local_stream_route = "v1/streams/local".to_string();
         web.storage.lumenbackend_nodes = vec!["https://lumenbackend-us.example.com".to_string()];
         web.billing.enabled = true;
         web.billing.min_recharge_amount = Decimal::new(500, 2);
@@ -2170,8 +2282,13 @@ auth:
         assert_eq!(cfg.scraper.tvdb.api_key, "tvdb-key");
         assert!(cfg.scraper.bangumi.enabled);
         assert_eq!(cfg.scraper.bangumi.access_token, "bgm-token");
+        assert_eq!(
+            cfg.scan.local_media_exts,
+            vec!["mp4".to_string(), "mkv".to_string()]
+        );
         assert!(cfg.storage.lumenbackend_enabled);
         assert_eq!(cfg.storage.lumenbackend_route, "cdn");
+        assert_eq!(cfg.storage.local_stream_route, "v1/streams/local");
         assert_eq!(
             cfg.storage.lumenbackend_nodes,
             vec!["https://lumenbackend-us.example.com".to_string()]
@@ -2244,6 +2361,26 @@ auth:
         assert!(!cfg.scheduler.enabled);
         assert_eq!(cfg.scheduler.cleanup_interval_seconds, 7200);
         assert_eq!(cfg.scheduler.job_retry_interval_seconds, 120);
+    }
+
+    #[test]
+    fn scan_config_normalizes_local_media_exts() {
+        let parsed: ScanConfig = serde_yaml::from_str(
+            r#"
+default_library_name: Demo
+local_media_exts:
+  - ".MP4"
+  - "mkv"
+  - "strm"
+  - "mp4"
+"#,
+        )
+        .expect("scan config");
+
+        assert_eq!(
+            parsed.local_media_exts,
+            vec!["mp4".to_string(), "mkv".to_string()]
+        );
     }
 
     #[test]

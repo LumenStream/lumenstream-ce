@@ -190,6 +190,7 @@ fn infer_stream_url_from_strm_path(path: &str) -> Option<String> {
                 || line.starts_with("gdrive://")
                 || line.starts_with("s3://")
                 || line.starts_with("lumenbackend://")
+                || line.starts_with("local://")
         })
         .map(str::to_string)
 }
@@ -398,8 +399,7 @@ fn item_row_to_dto(row: MediaItemRow, user_data: Option<UserDataDto>) -> BaseIte
     } else {
         Some("FileSystem".to_string())
     };
-    let media_source_path = metadata_string_by_aliases(meta, &["stream_url", "strm_url"])
-        .unwrap_or_else(|| row.path.clone());
+    let media_source_path = media_source_path_from_row(&row.path, None, meta);
     let mediainfo = meta.get("mediainfo").unwrap_or(&Value::Null);
     let parsed_media_streams = parse_media_streams_from_mediainfo(mediainfo);
     let parsed_chapters = parse_chapters_from_mediainfo(mediainfo);
@@ -416,13 +416,13 @@ fn item_row_to_dto(row: MediaItemRow, user_data: Option<UserDataDto>) -> BaseIte
     let container = infer_media_source_container(&media_source_path, meta)
         .or_else(|| extract_mediainfo_container(mediainfo));
     let media_sources = if !is_folder && media_type.is_some() {
-        let protocol = if media_source_path.starts_with("http://")
-            || media_source_path.starts_with("https://")
-        {
-            "Http".to_string()
-        } else {
-            "File".to_string()
-        };
+        let protocol =
+            if media_source_path.starts_with("http://") || media_source_path.starts_with("https://")
+            {
+                "Http".to_string()
+            } else {
+                "File".to_string()
+            };
         Some(vec![MediaSourceInfoDto {
             id: row.id.to_string(),
             name: None,

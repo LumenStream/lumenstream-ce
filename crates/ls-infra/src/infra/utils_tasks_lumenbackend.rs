@@ -187,6 +187,18 @@ fn is_special_stream_scheme(stream_url: &str) -> bool {
     stream_url.starts_with("gdrive://")
         || stream_url.starts_with("s3://")
         || stream_url.starts_with("lumenbackend://")
+        || stream_url.starts_with("local://")
+}
+
+fn decode_local_stream_path(raw: &str) -> Option<String> {
+    let encoded = raw.trim().strip_prefix("local://")?;
+    let decoded = urlencoding::decode(encoded).ok()?;
+    let decoded = decoded.trim();
+    if decoded.is_empty() {
+        None
+    } else {
+        Some(decoded.to_string())
+    }
 }
 
 fn normalize_lumenbackend_node(raw: &str) -> Option<String> {
@@ -237,14 +249,29 @@ fn effective_lumenbackend_route(raw: &str) -> &str {
     if route.is_empty() { "gdrive" } else { route }
 }
 
+fn effective_local_stream_route(raw: &str) -> &str {
+    let route = raw.trim();
+    if route.is_empty() {
+        "v1/streams/local"
+    } else {
+        route
+    }
+}
+
 fn normalize_lumenbackend_route(raw: &str) -> String {
     effective_lumenbackend_route(raw)
         .trim_matches('/')
         .to_ascii_lowercase()
 }
 
+fn normalize_local_stream_route(raw: &str) -> String {
+    effective_local_stream_route(raw)
+        .trim_matches('/')
+        .to_ascii_lowercase()
+}
+
 fn is_known_lumenbackend_route(route: &str) -> bool {
-    matches!(route, "gdrive" | "cdn" | "s3")
+    matches!(route, "gdrive" | "cdn" | "s3" | "local")
 }
 
 fn parse_lumenbackend_reference(raw: &str, default_route: &str) -> (String, String) {

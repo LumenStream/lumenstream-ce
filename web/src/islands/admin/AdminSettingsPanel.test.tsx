@@ -164,6 +164,12 @@ function setTextareaValue(element: HTMLTextAreaElement, value: string) {
   element.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function setInputValue(element: HTMLInputElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  descriptor?.set?.call(element, value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("AdminSettingsPanel", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -262,5 +268,52 @@ describe("AdminSettingsPanel", () => {
 
     expect(mockClearStorageCache).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("确认要清除全部存储缓存吗？");
+  });
+
+  it("writes local media ext and local route fields back into settings before save", async () => {
+    await act(async () => {
+      root.render(<AdminSettingsPanel />);
+      await flushEffects();
+    });
+
+    const extInput = container.querySelector(
+      'input[placeholder=\"mp4,mkv,iso\"]'
+    ) as HTMLInputElement | null;
+    const routeInput = container.querySelector(
+      'input[placeholder=\"v1/streams/local\"]'
+    ) as HTMLInputElement | null;
+    expect(extInput).not.toBeNull();
+    expect(routeInput).not.toBeNull();
+
+    await act(async () => {
+      if (extInput) {
+        setInputValue(extInput, " MP4, mkv, .mp4 ,strm ");
+      }
+      if (routeInput) {
+        setInputValue(routeInput, "custom/local/route");
+      }
+      await flushEffects();
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "保存设置"
+    );
+    expect(saveButton).not.toBeUndefined();
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushEffects();
+    });
+
+    expect(mockUpsertSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scan: expect.objectContaining({
+          local_media_exts: ["mp4", "mkv"],
+        }),
+        storage: expect.objectContaining({
+          local_stream_route: "custom/local/route",
+        }),
+      })
+    );
   });
 });

@@ -408,7 +408,9 @@ fn build_playback_mediainfo_from_ffprobe(ffprobe_payload: &Value) -> Value {
 }
 
 fn probe_target_is_supported_for_playback(raw: &str) -> bool {
-    raw.starts_with("http://") || raw.starts_with("https://")
+    raw.starts_with("http://")
+        || raw.starts_with("https://")
+        || std::path::Path::new(raw).is_absolute()
 }
 
 fn chapter_name_from_object(chapter_obj: &serde_json::Map<String, Value>) -> Option<String> {
@@ -1762,7 +1764,7 @@ fn extract_resolution_label(path: &str) -> Option<String> {
 }
 
 fn media_source_path_from_row(path: &str, stream_url: Option<&str>, metadata: &Value) -> String {
-    metadata
+    let resolved = metadata
         .get("stream_url")
         .or_else(|| metadata.get("strm_url"))
         .and_then(Value::as_str)
@@ -1775,7 +1777,8 @@ fn media_source_path_from_row(path: &str, stream_url: Option<&str>, metadata: &V
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         })
-        .unwrap_or_else(|| path.to_string())
+        .unwrap_or_else(|| path.to_string());
+    decode_local_stream_path(&resolved).unwrap_or(resolved)
 }
 
 fn playback_mediainfo_from_metadata(metadata: &Value) -> Value {
@@ -3143,6 +3146,18 @@ LIMIT 1
             return Ok(dedup_preserve_order(out));
         }
 
+        if let Some(path) = decode_local_stream_path(stream_url) {
+            let cfg = self.config_snapshot();
+            if cfg.storage.lumenbackend_enabled {
+                let route = normalize_local_stream_route(&cfg.storage.local_stream_route);
+                let out = self.build_lumenbackend_targets(route.as_str(), path.as_str(), stream_url);
+                if !out.is_empty() {
+                    return Ok(out);
+                }
+            }
+            return Ok(Vec::new());
+        }
+
         if let Some(remain) = stream_url.strip_prefix("s3://") {
             let mut parts = remain.splitn(2, '/');
             let bucket = parts.next().unwrap_or_default();
@@ -3172,6 +3187,18 @@ LIMIT 1
             if !out.is_empty() {
                 return Ok(out);
             }
+        }
+
+        if std::path::Path::new(stream_url).is_absolute() {
+            let cfg = self.config_snapshot();
+            if cfg.storage.lumenbackend_enabled {
+                let route = normalize_local_stream_route(&cfg.storage.local_stream_route);
+                let out = self.build_lumenbackend_targets(route.as_str(), stream_url, stream_url);
+                if !out.is_empty() {
+                    return Ok(out);
+                }
+            }
+            return Ok(Vec::new());
         }
 
         Ok(vec![stream_url.to_string()])

@@ -1178,7 +1178,7 @@ mod tests {
     }
 
     #[test]
-    fn build_system_flags_response_forces_strm_only_and_no_transcoding() {
+    fn build_system_flags_response_reports_local_file_support_and_no_transcoding() {
         let mut settings = WebAppConfig::default();
         settings.tmdb.enabled = true;
         settings.storage.lumenbackend_enabled = true;
@@ -1186,7 +1186,7 @@ mod tests {
         settings.observability.metrics_enabled = false;
 
         let response = build_system_flags_response(&settings);
-        assert!(response.strm_only_streaming);
+        assert!(!response.strm_only_streaming);
         assert!(!response.transcoding_enabled);
         assert!(response.scraper_enabled);
         assert!(response.tmdb_enabled);

@@ -139,6 +139,46 @@ docker compose up -d
 - **Web 界面**: 访问 `http://localhost:4321` 体验管理与播放功能。
 - **Jellyfin 客户端**: 在服务器地址中填入 `http://<服务器IP>:8096` 即可连接。
 
+### 5. 本地文件 + LocalBackend 一体化部署
+
+如果您希望在 CE 中直接读取 `.mp4/.mkv/.iso` 等本地文件，并使用同一个后端域名/端口进行推流，可使用仓库内置的一体化 Compose：
+
+1. 将以下两个仓库并排放置：
+
+```bash
+git clone https://github.com/lumen/lumenstream-ce.git
+git clone https://github.com/lumen/lumenlocalbackend-rs.git
+```
+
+2. 在 `lumenstream-ce` 目录中复制环境文件：
+
+```bash
+cp .env.fullstack.localbackend.example .env
+```
+
+3. 修改至少以下变量：
+   - `LS_BOOTSTRAP_ADMIN_USER`
+   - `LS_BOOTSTRAP_ADMIN_PASSWORD`
+   - `LS_LUMENBACKEND_STREAM_SIGNING_KEY`
+   - `LOCAL_MEDIA_MOUNT_SOURCE`
+
+4. 启动：
+
+```bash
+docker compose -f docker-compose.fullstack.localbackend.yml up -d --build
+```
+
+该部署拓扑会自动完成以下事情：
+- `lumenstream` 通过环境变量预置 `local_media_exts`、`lumenbackend_nodes`、`local_stream_route`
+- `lumenlocalbackend-rs` 负责本地文件的 `HEAD/GET/Range`
+- `stream-gateway` 对外暴露 `8096`，并将 `/v1/streams/local` 转发到 `lumenlocalbackend-rs`
+- 其余 API 请求继续转发到 LumenStream 后端，因此客户端仍只需要使用一个后端入口
+
+默认约定：
+- Web：`http://localhost:4321`
+- 后端/API/推流：`http://localhost:8096`
+- 本地媒体在容器内挂载到 `/media`
+
 ---
 
 ## 本地开发指南

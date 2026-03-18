@@ -1,0 +1,91 @@
+name: lumenstream-fullstack-localbackend
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lumenstream}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lumenstream}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.15
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ls_meili_default_key}
+    ports:
+      - "7700:7700"
+      - "4321:4321"
+    volumes:
+      - meili_data:/meili_data
+
+  lumenstream:
+    image: ${LS_FULLSTACK_IMAGE:-ghcr.io/lumenstream/lumenstream-ce-fullstack:latest}
+    restart: unless-stopped
+    network_mode: service:meilisearch
+    depends_on:
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+    environment:
+      LS_DATABASE_URL: ${LS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/lumenstream}
+      LS_DATABASE_MAX_CONNECTIONS: ${LS_DATABASE_MAX_CONNECTIONS:-20}
+      LS_BOOTSTRAP_ADMIN_USER: ${LS_BOOTSTRAP_ADMIN_USER:-}
+      LS_BOOTSTRAP_ADMIN_PASSWORD: ${LS_BOOTSTRAP_ADMIN_PASSWORD:-}
+      LS_API_BASE_URL: ${LS_API_BASE_URL:-http://127.0.0.1:8096}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ls_meili_default_key}
+      LS_CORS_ALLOW_ORIGINS: ${LS_CORS_ALLOW_ORIGINS:-}
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 4321
+      LS_LUMENBACKEND_ENABLED: ${LS_LUMENBACKEND_ENABLED:-true}
+      LS_LUMENBACKEND_NODES: ${LS_LUMENBACKEND_NODES:-http://stream-gateway:8096}
+      LS_LOCAL_STREAM_ROUTE: ${LS_LOCAL_STREAM_ROUTE:-v1/streams/local}
+      LS_SCAN_LOCAL_MEDIA_EXTS: ${LS_SCAN_LOCAL_MEDIA_EXTS:-mp4,mkv,flv,avi,mov,m4v,ts,m2ts,wmv,iso}
+      LS_LUMENBACKEND_STREAM_SIGNING_KEY: ${LS_LUMENBACKEND_STREAM_SIGNING_KEY:-replace-with-a-long-random-secret}
+      LS_LUMENBACKEND_STREAM_TOKEN_TTL_SECONDS: ${LS_LUMENBACKEND_STREAM_TOKEN_TTL_SECONDS:-86400}
+    volumes:
+      - ls_cache:/app/cache
+      - ${LOCAL_MEDIA_MOUNT_SOURCE:-/path/to/your/media}:${LOCAL_MEDIA_MOUNT_TARGET:-/media}:ro
+
+  lumenlocalbackend:
+    build:
+      context: ${LUMENLOCALBACKEND_BUILD_CONTEXT:-../lumenlocalbackend-rs}
+    restart: unless-stopped
+    environment:
+      LLB_HOST: 0.0.0.0
+      LLB_PORT: 18081
+      LLB_ROUTE_PATH: /v1/streams/local
+      LLB_SIGNING_KEY: ${LS_LUMENBACKEND_STREAM_SIGNING_KEY:-replace-with-a-long-random-secret}
+      LLB_ALLOWED_ROOTS: ${LOCAL_MEDIA_MOUNT_TARGET:-/media}
+    expose:
+      - "18081"
+    volumes:
+      - ${LOCAL_MEDIA_MOUNT_SOURCE:-/path/to/your/media}:${LOCAL_MEDIA_MOUNT_TARGET:-/media}:ro
+
+  stream-gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      meilisearch:
+        condition: service_started
+      lumenlocalbackend:
+        condition: service_started
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./docker/nginx.stream-gateway.localbackend.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  ls_cache:
+  postgres_data:
+  meili_data:

@@ -375,7 +375,7 @@ fn build_system_capabilities_response(state: &ApiContext) -> AdminSystemCapabili
     let edition = state.infra.config_snapshot().edition_capabilities();
     AdminSystemCapabilitiesResponse {
         edition: edition.edition,
-        strm_only_streaming: true,
+        strm_only_streaming: false,
         transcoding_enabled: false,
         billing_enabled: edition.billing_enabled,
         advanced_traffic_controls_enabled: edition.advanced_traffic_controls_enabled,
@@ -385,6 +385,7 @@ fn build_system_capabilities_response(state: &ApiContext) -> AdminSystemCapabili
         playback_routing_enabled: edition.playback_routing_enabled,
         supported_stream_features: vec![
             "strm-direct-play".to_string(),
+            "local-file-range".to_string(),
             "http-range".to_string(),
             "segment-gateway".to_string(),
             "distributed-fallback".to_string(),
@@ -505,7 +506,7 @@ async fn admin_get_system_summary(
 fn build_system_flags_response(settings: &WebAppConfig) -> AdminSystemFlagsResponse {
     let scraper_enabled = settings.scraper.enabled || settings.tmdb.enabled;
     AdminSystemFlagsResponse {
-        strm_only_streaming: true,
+        strm_only_streaming: false,
         transcoding_enabled: false,
         scraper_enabled,
         tmdb_enabled: scraper_enabled,

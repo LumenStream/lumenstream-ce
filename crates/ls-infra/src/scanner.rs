@@ -181,10 +181,10 @@ fn should_skip_existing_item(
 fn should_probe_mediainfo_sidecar(
     policy: ScanProbePolicy,
     has_mediainfo_file: bool,
-    stream_url: Option<&str>,
+    probe_target: Option<&str>,
 ) -> bool {
     matches!(policy, ScanProbePolicy::Enabled)
-        && should_generate_mediainfo_sidecar(has_mediainfo_file, stream_url)
+        && should_generate_mediainfo_sidecar(has_mediainfo_file, probe_target)
 }
 
 fn parse_stream_url_from_strm_content(strm_raw: &str) -> Option<String> {
@@ -200,6 +200,7 @@ fn parse_stream_url_from_strm_content(strm_raw: &str) -> Option<String> {
             || cleaned.starts_with("gdrive://")
             || cleaned.starts_with("s3://")
             || cleaned.starts_with("lumenbackend://")
+            || cleaned.starts_with("local://")
         {
             return Some(cleaned.to_string());
         }
@@ -210,6 +211,94 @@ fn parse_stream_url_from_strm_content(strm_raw: &str) -> Option<String> {
     }
 
     fallback
+}
+
+fn build_local_stream_url(path: &Path) -> String {
+    format!(
+        "local://{}",
+        urlencoding::encode(path.to_string_lossy().as_ref())
+    )
+}
+
+fn resolve_local_stream_path(origin_path: &Path, raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let candidate = Path::new(trimmed);
+    let resolved = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        origin_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(candidate)
+    };
+
+    std::fs::canonicalize(&resolved).ok().or(Some(resolved))
+}
+
+fn normalize_scanned_stream_url(media_path: &Path, raw_target: Option<String>) -> Option<String> {
+    let is_strm = media_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("strm"));
+    if !is_strm {
+        return Some(build_local_stream_url(media_path));
+    }
+
+    let raw_target = raw_target?;
+    let trimmed = raw_target.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("gdrive://")
+        || trimmed.starts_with("s3://")
+        || trimmed.starts_with("lumenbackend://")
+        || trimmed.starts_with("local://")
+    {
+        return Some(trimmed.to_string());
+    }
+
+    resolve_local_stream_path(media_path, trimmed).map(|path| build_local_stream_url(&path))
+}
+
+fn resolve_scan_probe_target(media_path: &Path, stream_url: Option<&str>) -> Option<String> {
+    let is_strm = media_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("strm"));
+
+    if !is_strm {
+        return Some(media_path.to_string_lossy().to_string());
+    }
+
+    let stream_url = stream_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if stream_url.starts_with("http://") || stream_url.starts_with("https://") {
+        return Some(stream_url.to_string());
+    }
+    if let Some(raw) = stream_url.strip_prefix("local://") {
+        let decoded = urlencoding::decode(raw).ok()?;
+        let decoded = decoded.trim();
+        if decoded.is_empty() {
+            return None;
+        }
+        return Some(decoded.to_string());
+    }
+    None
+}
+
+fn is_scannable_media_extension(path: &Path, local_media_exts: &HashSet<String>) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    ext.eq_ignore_ascii_case("strm") || local_media_exts.contains(&ext.to_ascii_lowercase())
 }
 
 /// Map a media file path to a deterministic cache path, mirroring the directory structure.
@@ -231,6 +320,7 @@ pub async fn scan_library<F, Fut>(
     library_type: &str,
     scope_path: Option<&Path>,
     subtitle_exts: &[String],
+    local_media_exts: &[String],
     mode: ScanMode,
     since: Option<DateTime<Utc>>,
     grace_seconds: i64,
@@ -280,6 +370,11 @@ where
 
     let threshold = since.map(|ts| ts - Duration::seconds(grace_seconds.max(0)));
     let subtitle_ext_lookup = build_subtitle_ext_lookup(subtitle_exts);
+    let local_media_ext_lookup = local_media_exts
+        .iter()
+        .map(|ext| ext.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty() && ext != "strm")
+        .collect::<HashSet<_>>();
     let mut subtitle_dir_cache = SubtitleDirCache::default();
     let mut modified_since_cache = ModifiedSinceCache::default();
     let mut summary = ScanSummary::default();
@@ -296,12 +391,7 @@ where
             .filter(|entry| entry.file_type().is_file())
         {
             let path = entry.path();
-            if path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("strm"))
-                != Some(true)
-            {
+            if !is_scannable_media_extension(path, &local_media_ext_lookup) {
                 continue;
             }
 
@@ -350,10 +440,20 @@ where
         }
         existing_paths.insert(path_str.clone());
 
-        let strm_raw = tokio::fs::read_to_string(path)
-            .await
-            .with_context(|| format!("failed to read strm file: {}", path.display()))?;
-        let stream_url = parse_stream_url_from_strm_content(&strm_raw);
+        let is_strm = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("strm"));
+        let raw_stream_url = if is_strm {
+            let strm_raw = tokio::fs::read_to_string(path)
+                .await
+                .with_context(|| format!("failed to read strm file: {}", path.display()))?;
+            parse_stream_url_from_strm_content(&strm_raw)
+        } else {
+            None
+        };
+        let stream_url = normalize_scanned_stream_url(path, raw_stream_url);
+        let probe_target = resolve_scan_probe_target(path, stream_url.as_deref());
 
         let stem = path
             .file_stem()
@@ -378,9 +478,9 @@ where
         if should_probe_mediainfo_sidecar(
             probe_policy,
             mediainfo_path.exists() || legacy_mediainfo_path.exists(),
-            stream_url.as_deref(),
+            probe_target.as_deref(),
         ) {
-            if let Some(probe_target) = stream_url.as_deref() {
+            if let Some(probe_target) = probe_target.as_deref() {
                 if let Err(err) = generate_mediainfo_sidecar(&mediainfo_path, probe_target).await {
                     warn!(
                         path = %path.display(),
@@ -464,11 +564,15 @@ where
 
         let metadata = json!({
             "source": {
-                "strm": path_str,
+                "kind": if is_strm { "strm" } else { "local_file" },
+                "path": path_str.clone(),
+                "strm": if is_strm { Some(path_str.clone()) } else { None },
+                "file": if is_strm { None } else { Some(path_str.clone()) },
                 "nfo": nfo_path.exists(),
                 "mediainfo_json": effective_mediainfo_path.exists()
             },
-            "strm_url": stream_url,
+            "stream_url": stream_url.clone(),
+            "strm_url": stream_url.clone(),
             "production_year": parsed_nfo.year,
             "official_rating": parsed_nfo.official_rating,
             "tags": parsed_nfo.tags.clone(),
@@ -1069,7 +1173,9 @@ fn should_generate_mediainfo_sidecar(has_mediainfo_file: bool, stream_url: Optio
         return false;
     };
 
-    stream_url.starts_with("http://") || stream_url.starts_with("https://")
+    stream_url.starts_with("http://")
+        || stream_url.starts_with("https://")
+        || Path::new(stream_url).is_absolute()
 }
 
 async fn generate_mediainfo_sidecar(
@@ -2197,11 +2303,12 @@ mod tests {
         VersionGroupCandidateRow, build_mediainfo_from_ffprobe, capture_tag,
         compare_version_priority, detect_item_type, directory_display_name, extract_bitrate,
         extract_runtime_ticks, find_subtitles, infer_subtitle_default, infer_subtitle_language,
-        missing_metadata_fields, normalize_mediainfo, parse_duration_seconds_to_ticks,
-        parse_episode_number, parse_nfo, parse_season_number, parse_stream_url_from_strm_content,
-        resolve_item_name, resolve_season_identity, season_display_name,
-        should_generate_mediainfo_sidecar, should_probe_mediainfo_sidecar, should_scan_incremental,
-        should_skip_existing_item, version_group_key,
+        missing_metadata_fields, normalize_mediainfo, normalize_scanned_stream_url,
+        parse_duration_seconds_to_ticks, parse_episode_number, parse_nfo, parse_season_number,
+        parse_stream_url_from_strm_content, resolve_item_name, resolve_scan_probe_target,
+        resolve_season_identity, season_display_name, should_generate_mediainfo_sidecar,
+        should_probe_mediainfo_sidecar, should_scan_incremental, should_skip_existing_item,
+        version_group_key,
     };
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -2442,6 +2549,10 @@ mod tests {
             false,
             Some("https://example.com/video")
         ));
+        assert!(should_generate_mediainfo_sidecar(
+            false,
+            Some("/mnt/media/movie.mkv")
+        ));
         assert!(!should_generate_mediainfo_sidecar(
             true,
             Some("https://example.com/video")
@@ -2510,6 +2621,34 @@ mod tests {
         assert_eq!(
             parse_stream_url_from_strm_content(content).as_deref(),
             Some("/mnt/media/movie.mkv")
+        );
+    }
+
+    #[test]
+    fn normalize_scanned_stream_url_uses_local_scheme_for_local_files() {
+        let path = Path::new("/library/Movie/Movie.mkv");
+        assert_eq!(
+            normalize_scanned_stream_url(path, None).as_deref(),
+            Some("local://%2Flibrary%2FMovie%2FMovie.mkv")
+        );
+    }
+
+    #[test]
+    fn normalize_scanned_stream_url_converts_local_strm_targets() {
+        let path = Path::new("/library/Movie/Movie.strm");
+        assert_eq!(
+            normalize_scanned_stream_url(path, Some("/mnt/media/movie.mkv".to_string())).as_deref(),
+            Some("local://%2Fmnt%2Fmedia%2Fmovie.mkv")
+        );
+    }
+
+    #[test]
+    fn resolve_scan_probe_target_decodes_local_stream_scheme() {
+        let media_path = Path::new("/library/Movie/Movie.mkv");
+        assert_eq!(
+            resolve_scan_probe_target(media_path, Some("local://%2Flibrary%2FMovie%2FMovie.mkv"))
+                .as_deref(),
+            Some("/library/Movie/Movie.mkv")
         );
     }
 

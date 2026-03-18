@@ -23,6 +23,8 @@ export function AdminSettingsPanel() {
   const [settings, setSettings] = useState<WebAppSettings | null>(null);
   const [draft, setDraft] = useState("");
   const [tmdbApiKey, setTmdbApiKey] = useState("");
+  const [localMediaExts, setLocalMediaExts] = useState("");
+  const [localStreamRoute, setLocalStreamRoute] = useState("v1/streams/local");
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [cacheLoading, setCacheLoading] = useState<"cleanup" | "invalidate" | null>(null);
@@ -30,13 +32,30 @@ export function AdminSettingsPanel() {
     null
   );
 
+  function normalizeExtInput(value: string): string[] {
+    return Array.from(
+      new Set(
+        value
+          .split(",")
+          .map((item) => item.trim().replace(/^\./, "").toLowerCase())
+          .filter((item) => item.length > 0 && item !== "strm")
+      )
+    );
+  }
+
+  function applySettingsToForm(payload: WebAppSettings) {
+    setSettings(payload);
+    setTmdbApiKey(payload.tmdb?.api_key ?? "");
+    setLocalMediaExts((payload.scan?.local_media_exts ?? []).join(","));
+    setLocalStreamRoute(String(payload.storage?.local_stream_route ?? "v1/streams/local"));
+    setDraft(JSON.stringify(payload, null, 2));
+  }
+
   async function reload() {
     setLoading(true);
     try {
       const payload = await getSettings(false);
-      setSettings(payload);
-      setTmdbApiKey(payload.tmdb?.api_key ?? "");
-      setDraft(JSON.stringify(payload, null, 2));
+      applySettingsToForm(payload);
       setError(null);
     } catch (cause) {
       const apiError = cause as ApiError;
@@ -71,10 +90,16 @@ export function AdminSettingsPanel() {
       if (tmdbApiKey) {
         parsed.tmdb.api_key = tmdbApiKey;
       }
+      parsed.scan = {
+        ...parsed.scan,
+        local_media_exts: normalizeExtInput(localMediaExts),
+      };
+      parsed.storage = {
+        ...parsed.storage,
+        local_stream_route: localStreamRoute.trim() || "v1/streams/local",
+      };
       const result = await upsertSettings(parsed);
-      setSettings(result.settings);
-      setTmdbApiKey(result.settings.tmdb?.api_key ?? "");
-      setDraft(JSON.stringify(result.settings, null, 2));
+      applySettingsToForm(result.settings);
       toast.success(result.restart_required ? "设置已保存，需重启后端生效。" : "设置已保存。");
     } catch (cause) {
       const apiError = cause as ApiError;
@@ -160,6 +185,38 @@ export function AdminSettingsPanel() {
         </div>
       </section>
 
+      <section className="border-border/50 border-b pb-6">
+        <h3 className="text-sm font-medium">本地文件扫描与同域推流</h3>
+        <p className="text-muted-foreground mt-1 mb-4 text-xs">
+          配置可扫描的本地媒体后缀，以及本地文件通过后端域名推流时使用的路径。`.strm`
+          始终支持，无需填写。
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-1">
+            <span className="text-muted-foreground text-xs">本地媒体后缀</span>
+            <Input
+              className="font-mono text-xs"
+              placeholder="mp4,mkv,iso"
+              value={localMediaExts}
+              onChange={(event) => setLocalMediaExts(event.target.value)}
+            />
+            <p className="text-muted-foreground text-[11px]">英文逗号分隔，例如：mp4,mkv,flv</p>
+          </label>
+          <label className="space-y-1">
+            <span className="text-muted-foreground text-xs">本地推流路由</span>
+            <Input
+              className="font-mono text-xs"
+              placeholder="v1/streams/local"
+              value={localStreamRoute}
+              onChange={(event) => setLocalStreamRoute(event.target.value)}
+            />
+            <p className="text-muted-foreground text-[11px]">
+              反向代理把该路径转发到本地推流后端，即可复用现有后端域名。
+            </p>
+          </label>
+        </div>
+      </section>
+
       <section>
         <h3 className="text-sm font-medium">系统设置（JSON）</h3>
         <p className="text-muted-foreground mt-1 mb-4 text-xs">
@@ -182,7 +239,7 @@ export function AdminSettingsPanel() {
               variant="secondary"
               onClick={() => {
                 if (settings) {
-                  setDraft(JSON.stringify(settings, null, 2));
+                  applySettingsToForm(settings);
                 }
               }}
               disabled={savingSettings}

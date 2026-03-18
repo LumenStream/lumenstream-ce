@@ -140,6 +140,7 @@ ON CONFLICT(library_id) DO UPDATE SET
             &library.library_type,
             scan_scope.as_deref(),
             &self.config_snapshot().scan.subtitle_extensions,
+            &self.config_snapshot().scan.local_media_exts,
             scan_mode,
             since,
             self.config_snapshot().scan.incremental_grace_seconds,

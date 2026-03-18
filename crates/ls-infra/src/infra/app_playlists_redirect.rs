@@ -473,6 +473,11 @@ LIMIT 1
                 normalize_lumenbackend_route(&self.config_snapshot().storage.lumenbackend_route),
                 file_id.trim().to_string(),
             )
+        } else if let Some(path) = decode_local_stream_path(raw_url.as_str()) {
+            (
+                normalize_local_stream_route(&self.config_snapshot().storage.local_stream_route),
+                path,
+            )
         } else if let Some(raw) = raw_url.strip_prefix("lumenbackend://") {
             parse_lumenbackend_reference(raw, &self.config_snapshot().storage.lumenbackend_route)
         } else if raw_url.starts_with("http://") || raw_url.starts_with("https://") {
@@ -481,6 +486,11 @@ LIMIT 1
             } else {
                 return Ok(Some(raw_url));
             }
+        } else if std::path::Path::new(raw_url.as_str()).is_absolute() {
+            (
+                normalize_local_stream_route(&self.config_snapshot().storage.local_stream_route),
+                raw_url.clone(),
+            )
         } else {
             return Ok(None);
         };

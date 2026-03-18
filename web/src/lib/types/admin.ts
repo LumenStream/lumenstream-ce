@@ -365,6 +365,31 @@ export interface ScraperSettingsResponse {
 export type ScraperCacheStats = TmdbCacheStats;
 export type ScraperFailureEntry = TmdbFailureEntry;
 
+export interface WebAppScanSettings extends Record<string, unknown> {
+  default_library_name?: string;
+  default_library_paths?: string[];
+  subtitle_extensions?: string[];
+  local_media_exts?: string[];
+  incremental_grace_seconds?: number;
+  mediainfo_cache_dir?: string;
+}
+
+export interface WebAppStorageSettings extends Record<string, unknown> {
+  gdrive_enabled?: boolean;
+  s3_enabled?: boolean;
+  gdrive_accounts?: string[];
+  s3_cache_dir?: string;
+  s3_cache_ttl_seconds?: number;
+  segment_gateway_base_url?: string;
+  prefer_segment_gateway?: boolean;
+  lumenbackend_enabled?: boolean;
+  lumenbackend_nodes?: string[];
+  lumenbackend_route?: string;
+  local_stream_route?: string;
+  lumenbackend_stream_signing_key?: string;
+  lumenbackend_stream_token_ttl_seconds?: number;
+}
+
 export interface WebAppSettings {
   server: {
     host: string;
@@ -388,8 +413,8 @@ export interface WebAppSettings {
       inviter_rebate_rate: string;
     };
   };
-  scan: Record<string, unknown>;
-  storage: Record<string, unknown>;
+  scan: WebAppScanSettings;
+  storage: WebAppStorageSettings;
   tmdb: TmdbConfig;
   scraper: ScraperConfig;
   security: {
