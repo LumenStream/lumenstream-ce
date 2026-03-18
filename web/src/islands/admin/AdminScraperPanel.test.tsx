@@ -296,7 +296,7 @@ describe("AdminScraperPanel", () => {
     expect(container.textContent).toContain("TVDB");
     expect(container.textContent).toContain("Bangumi");
     expect(container.textContent).toContain("总缓存条目");
-    expect(container.textContent).toContain("媒体库管理");
-    expect(container.textContent).toContain("逐库配置");
+    expect(container.textContent).toContain("管理媒体库");
+    expect(container.textContent).toContain("媒体库级别的刮削配置已迁移到媒体库管理页面");
   });
 });

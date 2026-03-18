@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { ErrorState, LoadingState } from "@/components/domain/DataState";
 import { SortableProviderList } from "@/components/ui/sortable-provider-list";
@@ -296,74 +298,90 @@ export function AdminScraperPanel() {
   if (error) return <ErrorState title="刮削系统页加载失败" description={error} />;
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-lg border border-white/10 bg-black p-6">
+    <div className="space-y-8">
+      <section className="rounded-xl border border-white/10 bg-black/60 p-6 shadow-sm backdrop-blur-sm">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
           <div className="space-y-3">
-            <h3 className="text-2xl font-medium text-white">刮削框架配置</h3>
-            <p className="max-w-2xl text-sm text-slate-400">
-              统一维护 provider
-              顺序、默认场景链、连接健康度与运行状态。媒体库启用什么刮削已迁移到媒体库管理页面逐库配置。
+            <h3 className="text-2xl font-semibold text-white">刮削框架配置</h3>
+            <p className="max-w-2xl text-sm leading-relaxed text-slate-400">
+              统一维护 provider 顺序、默认场景链、连接健康度与运行状态。
+              媒体库级别的刮削配置已迁移到媒体库管理页面。
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant={flags?.scraper_enabled ? "success" : "outline"}>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Badge variant={flags?.scraper_enabled ? "success" : "outline"} className="px-3">
                 {flags?.scraper_enabled ? "已启用" : "已禁用"}
               </Badge>
-              <Badge variant="outline">{providers.length} 个 Provider</Badge>
-              <Badge variant="outline">默认：{providersInput || "tmdb"}</Badge>
+              <Badge variant="outline" className="px-3">
+                {providers.length} 个 Provider
+              </Badge>
+              <Badge variant="outline" className="px-3">
+                默认：{providersInput || "tmdb"}
+              </Badge>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 xl:min-w-[280px]">
-            <div className="flex gap-2 text-sm">
-              <div className="flex-1 rounded border border-white/10 bg-white/5 px-3 py-2">
-                <div className="text-xs text-slate-500">健康</div>
-                <div className="text-lg font-medium text-white">
+          <div className="flex flex-col gap-3 xl:min-w-[300px]">
+            <div className="flex gap-3 text-sm">
+              <div className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-3 shadow-inner">
+                <div className="mb-1 text-xs font-medium text-slate-400">健康节点</div>
+                <div className="text-2xl font-semibold text-emerald-400">
                   {providers.filter((provider) => provider.healthy).length}
                 </div>
               </div>
-              <div className="flex-1 rounded border border-white/10 bg-white/5 px-3 py-2">
-                <div className="text-xs text-slate-500">失败</div>
-                <div className="text-lg font-medium text-white">{failures.length}</div>
+              <div className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-3 shadow-inner">
+                <div className="mb-1 text-xs font-medium text-slate-400">失败记录</div>
+                <div className="text-2xl font-semibold text-rose-400">{failures.length}</div>
               </div>
             </div>
-            <Button
-              variant="secondary"
-              className="justify-between"
-              onClick={onToggleEnabled}
-              disabled={togglingEnabled}
-            >
-              {togglingEnabled
-                ? "切换中..."
-                : flags?.scraper_enabled
-                  ? "禁用全局刮削"
-                  : "启用全局刮削"}
-            </Button>
-            <a
-              href="/admin/libraries"
-              className="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15 inline-flex items-center justify-center rounded-lg border px-4 py-2 text-sm font-medium transition"
-            >
-              转到媒体库配置
-            </a>
+            <div className="flex gap-2">
+              <Button
+                variant={flags?.scraper_enabled ? "secondary" : "default"}
+                className="flex-1"
+                onClick={onToggleEnabled}
+                disabled={togglingEnabled}
+              >
+                {togglingEnabled
+                  ? "切换中..."
+                  : flags?.scraper_enabled
+                    ? "禁用全局刮削"
+                    : "启用全局刮削"}
+              </Button>
+              <a
+                href="/admin/libraries"
+                className="border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 inline-flex flex-1 items-center justify-center rounded-md border px-4 py-2 text-sm font-medium transition-colors"
+              >
+                管理媒体库
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-lg border border-white/10 bg-black p-5">
-          <div className="mb-4">
-            <h4 className="text-sm font-medium text-white">全局策略</h4>
-            <p className="mt-1 text-xs text-slate-500">
-              全局策略控制默认链路与 provider 凭据；逐库覆盖请前往媒体库页。
-            </p>
+      <div className="grid gap-6 xl:grid-cols-[1fr_360px] 2xl:grid-cols-[1.3fr_0.7fr]">
+        <div className="space-y-5">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-lg font-medium text-white">全局策略</h2>
+            <div className="flex items-center gap-2">
+              <Button onClick={onSave} disabled={saving} size="sm">
+                {saving ? "保存中..." : "保存全部配置"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={onTriggerFill} disabled={triggerLoading}>
+                {triggerLoading ? "触发中..." : "触发补齐"}
+              </Button>
+            </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="space-y-3 rounded border border-white/5 bg-white/[0.02] p-4">
+          <CollapsibleCard
+            title="基础策略与默认提供者"
+            description="配置默认的刮削策略和全局 Provider 优先级"
+            defaultOpen={true}
+          >
+            <div className="grid gap-6 sm:grid-cols-[1fr_1.5fr]">
               <Field label="默认策略">
                 <Input
                   value={defaultStrategy}
                   onChange={(event) => setDefaultStrategy(event.target.value)}
+                  placeholder="例如: primary_with_fallback"
                 />
               </Field>
               <Field label="全局 Provider 列表 (拖拽排序)">
@@ -377,7 +395,16 @@ export function AdminScraperPanel() {
                   onChange={(activeIds) => setProvidersInput(activeIds.join(", "))}
                 />
               </Field>
-              <Field label="TMDB API Key">
+            </div>
+          </CollapsibleCard>
+
+          <CollapsibleCard
+            title="TMDB 配置"
+            description="The Movie Database 核心刮削源"
+            defaultOpen={true}
+          >
+            <div className="space-y-4">
+              <Field label="API Key">
                 <Input
                   type="password"
                   value={tmdbApiKey}
@@ -385,7 +412,7 @@ export function AdminScraperPanel() {
                   placeholder="输入 TMDB API Key"
                 />
               </Field>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label="语言">
                   <Input
                     value={tmdbLanguage}
@@ -394,112 +421,143 @@ export function AdminScraperPanel() {
                 </Field>
                 <Field label="超时（秒）">
                   <Input
+                    type="number"
                     value={timeoutSeconds}
                     onChange={(event) => setTimeoutSeconds(event.target.value)}
                   />
                 </Field>
                 <Field label="请求间隔（ms）">
                   <Input
+                    type="number"
                     value={requestIntervalMs}
                     onChange={(event) => setRequestIntervalMs(event.target.value)}
                   />
                 </Field>
                 <Field label="缓存 TTL（秒）">
                   <Input
+                    type="number"
                     value={cacheTtlSeconds}
                     onChange={(event) => setCacheTtlSeconds(event.target.value)}
                   />
                 </Field>
                 <Field label="重试次数">
                   <Input
+                    type="number"
                     value={retryAttempts}
                     onChange={(event) => setRetryAttempts(event.target.value)}
                   />
                 </Field>
                 <Field label="退避（ms）">
                   <Input
+                    type="number"
                     value={retryBackoffMs}
                     onChange={(event) => setRetryBackoffMs(event.target.value)}
                   />
                 </Field>
               </div>
             </div>
+          </CollapsibleCard>
 
-            <div className="space-y-3 rounded border border-white/5 bg-white/[0.02] p-4">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-300">TVDB 启用</label>
+          <CollapsibleCard
+            title="TVDB 配置"
+            description="TheTVDB 剧集刮削源"
+            headerAction={
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-400">启用</span>
                 <Switch checked={tvdbEnabled} onCheckedChange={setTvdbEnabled} />
               </div>
-              <Field label="TVDB Base URL">
+            }
+          >
+            <div className="space-y-4">
+              <Field label="Base URL">
                 <Input
                   value={tvdbBaseUrl}
                   onChange={(event) => setTvdbBaseUrl(event.target.value)}
                 />
               </Field>
-              <Field label="TVDB API Key">
-                <Input
-                  type="password"
-                  value={tvdbApiKey}
-                  onChange={(event) => setTvdbApiKey(event.target.value)}
-                  placeholder="输入 TVDB API Key"
-                />
-              </Field>
-              <Field label="TVDB PIN">
-                <Input
-                  type="password"
-                  value={tvdbPin}
-                  onChange={(event) => setTvdbPin(event.target.value)}
-                  placeholder="输入 TVDB PIN"
-                />
-              </Field>
-              <Field label="TVDB 超时（秒）">
-                <Input
-                  value={tvdbTimeoutSeconds}
-                  onChange={(event) => setTvdbTimeoutSeconds(event.target.value)}
-                />
-              </Field>
-              <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
-                <label className="text-xs font-medium text-slate-300">Bangumi 启用</label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="API Key">
+                  <Input
+                    type="password"
+                    value={tvdbApiKey}
+                    onChange={(event) => setTvdbApiKey(event.target.value)}
+                    placeholder="输入 TVDB API Key"
+                  />
+                </Field>
+                <Field label="PIN">
+                  <Input
+                    type="password"
+                    value={tvdbPin}
+                    onChange={(event) => setTvdbPin(event.target.value)}
+                    placeholder="输入 TVDB PIN"
+                  />
+                </Field>
+              </div>
+              <div className="max-w-[200px]">
+                <Field label="超时（秒）">
+                  <Input
+                    type="number"
+                    value={tvdbTimeoutSeconds}
+                    onChange={(event) => setTvdbTimeoutSeconds(event.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+          </CollapsibleCard>
+
+          <CollapsibleCard
+            title="Bangumi 配置"
+            description="番组计划 (bgm.tv) 动漫刮削源"
+            headerAction={
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-400">启用</span>
                 <Switch checked={bangumiEnabled} onCheckedChange={setBangumiEnabled} />
               </div>
-              <Field label="Bangumi Base URL">
+            }
+          >
+            <div className="space-y-4">
+              <Field label="Base URL">
                 <Input
                   value={bangumiBaseUrl}
                   onChange={(event) => setBangumiBaseUrl(event.target.value)}
                 />
               </Field>
-              <Field label="Bangumi Access Token">
-                <Input
-                  type="password"
-                  value={bangumiAccessToken}
-                  onChange={(event) => setBangumiAccessToken(event.target.value)}
-                  placeholder="输入 Bangumi Access Token"
-                />
-              </Field>
-              <Field label="Bangumi 超时（秒）">
-                <Input
-                  value={bangumiTimeoutSeconds}
-                  onChange={(event) => setBangumiTimeoutSeconds(event.target.value)}
-                />
-              </Field>
-              <Field label="Bangumi User-Agent">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Access Token">
+                  <Input
+                    type="password"
+                    value={bangumiAccessToken}
+                    onChange={(event) => setBangumiAccessToken(event.target.value)}
+                    placeholder="输入 Bangumi Access Token"
+                  />
+                </Field>
+                <Field label="超时（秒）">
+                  <Input
+                    type="number"
+                    value={bangumiTimeoutSeconds}
+                    onChange={(event) => setBangumiTimeoutSeconds(event.target.value)}
+                  />
+                </Field>
+              </div>
+              <Field label="User-Agent">
                 <Input
                   value={bangumiUserAgent}
                   onChange={(event) => setBangumiUserAgent(event.target.value)}
                 />
               </Field>
             </div>
-          </div>
+          </CollapsibleCard>
         </div>
 
-        <div className="rounded-lg border border-white/10 bg-black p-5">
-          <div className="mb-4">
-            <h4 className="text-sm font-medium text-white">场景路由</h4>
+        <div className="space-y-5">
+          <div className="mb-2 px-1">
+            <h2 className="text-lg font-medium text-white">场景路由</h2>
             <p className="mt-1 text-xs text-slate-500">
-              每个场景按默认 provider chain 依次回退；库级链路请在媒体库页定制。
+              各场景默认 Provider 退避链路，拖拽排序调整优先级。
             </p>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
             {SCRAPER_SCENARIO_KEYS.map((scenarioKey) => {
               const currentChainRaw = scenarioInputs[scenarioKey] ?? "";
               const currentChain = currentChainRaw
@@ -510,7 +568,7 @@ export function AdminScraperPanel() {
               return (
                 <div
                   key={scenarioKey}
-                  className="rounded border border-white/5 bg-white/[0.02] p-4"
+                  className="rounded-lg border border-white/10 bg-black/40 p-4 transition-colors hover:bg-black/60"
                 >
                   <Field label={scenarioKey}>
                     <SortableProviderList
@@ -533,108 +591,118 @@ export function AdminScraperPanel() {
               );
             })}
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? "保存中..." : "保存配置"}
-            </Button>
-            <Button variant="outline" onClick={onTriggerFill} disabled={triggerLoading}>
-              {triggerLoading ? "触发中..." : "触发刮削"}
-            </Button>
-          </div>
         </div>
-      </section>
+      </div>
 
-      <section className="rounded-lg border border-white/10 bg-black p-5">
-        <div className="mb-4">
-          <h3 className="text-sm font-medium text-white">Provider 健康状态</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            展示当前已注册 Provider 的能力、启用状态和检查结果。
-          </p>
-        </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          {providers.map((provider) => (
-            <div
-              key={provider.provider_id}
-              className="rounded border border-white/5 bg-white/[0.02] p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
+      <div className="grid gap-6 xl:grid-cols-2">
+        <SectionCard
+          title="Provider 健康状态"
+          description="当前已注册 Provider 的能力、启用状态和检查结果。"
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            {providers.map((provider) => (
+              <div
+                key={provider.provider_id}
+                className="flex flex-col justify-between rounded-lg border border-white/10 bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]"
+              >
                 <div>
-                  <p className="text-sm font-medium text-white">{provider.display_name}</p>
-                  <p className="mt-1 text-xs text-slate-500">{provider.provider_kind}</p>
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">{provider.display_name}</p>
+                      <p className="text-xs text-slate-500">{provider.provider_kind}</p>
+                    </div>
+                    <Badge
+                      variant={
+                        provider.healthy ? "success" : provider.enabled ? "outline" : "secondary"
+                      }
+                    >
+                      {provider.healthy ? "Healthy" : provider.enabled ? "待配置" : "Disabled"}
+                    </Badge>
+                  </div>
+                  <p className="line-clamp-2 min-h-[32px] text-xs text-slate-400">
+                    {provider.message}
+                  </p>
+
+                  <div className="mt-4 space-y-1.5">
+                    <p className="flex justify-between text-xs text-slate-500">
+                      <span>能力:</span>
+                      <span
+                        className="max-w-[140px] truncate text-right text-slate-300"
+                        title={provider.capabilities.join(", ")}
+                      >
+                        {provider.capabilities.join(", ") || "-"}
+                      </span>
+                    </p>
+                    <p className="flex justify-between text-xs text-slate-500">
+                      <span>场景:</span>
+                      <span
+                        className="max-w-[140px] truncate text-right text-slate-300"
+                        title={provider.scenarios.join(", ")}
+                      >
+                        {provider.scenarios.join(", ") || "-"}
+                      </span>
+                    </p>
+                  </div>
                 </div>
-                <Badge
-                  variant={
-                    provider.healthy ? "success" : provider.enabled ? "outline" : "secondary"
-                  }
-                >
-                  {provider.healthy ? "Healthy" : provider.enabled ? "待配置" : "Disabled"}
-                </Badge>
+                <div className="mt-4 border-t border-white/10 pt-4">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onTestProvider(provider.provider_id)}
+                    disabled={testingProviderId === provider.provider_id}
+                  >
+                    {testingProviderId === provider.provider_id ? "检测中..." : "测试连接"}
+                  </Button>
+                </div>
               </div>
-              <p className="mt-3 text-xs text-slate-400">{provider.message}</p>
-              <p className="mt-2 text-xs text-slate-500">
-                能力：{provider.capabilities.join(", ") || "-"}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                场景：{provider.scenarios.join(", ") || "-"}
-              </p>
-              <div className="mt-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onTestProvider(provider.provider_id)}
-                  disabled={testingProviderId === provider.provider_id}
-                >
-                  {testingProviderId === provider.provider_id ? "检测中..." : "测试连接"}
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </SectionCard>
 
-      <section className="rounded-lg border border-white/10 bg-black p-5">
-        <h3 className="mb-4 text-sm font-medium text-white">运行指标</h3>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric
-            label="HTTP 请求数"
-            value={metrics.scraper_http_requests_total ?? metrics.tmdb_http_requests_total ?? 0}
-          />
-          <Metric
-            label="缓存命中"
-            value={metrics.scraper_cache_hits_total ?? metrics.tmdb_cache_hits_total ?? 0}
-          />
-          <Metric
-            label="缓存未命中"
-            value={metrics.scraper_cache_misses_total ?? metrics.tmdb_cache_misses_total ?? 0}
-          />
-          <Metric
-            label="命中率"
-            value={`${(((metrics.scraper_hit_rate ?? metrics.tmdb_hit_rate ?? 0) as number) * 100).toFixed(1)}%`}
-          />
-          <Metric
-            label="成功数"
-            value={metrics.scraper_success_total ?? metrics.tmdb_success_total ?? 0}
-          />
-          <Metric
-            label="失败数"
-            value={metrics.scraper_failure_total ?? metrics.tmdb_failure_total ?? 0}
-          />
-        </div>
-      </section>
+        <SectionCard title="运行指标" description="刮削系统 API 调用的实时统计数据。">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Metric
+              label="HTTP 请求数"
+              value={metrics.scraper_http_requests_total ?? metrics.tmdb_http_requests_total ?? 0}
+            />
+            <Metric
+              label="缓存命中"
+              value={metrics.scraper_cache_hits_total ?? metrics.tmdb_cache_hits_total ?? 0}
+            />
+            <Metric
+              label="缓存未命中"
+              value={metrics.scraper_cache_misses_total ?? metrics.tmdb_cache_misses_total ?? 0}
+            />
+            <Metric
+              label="命中率"
+              value={`${(((metrics.scraper_hit_rate ?? metrics.tmdb_hit_rate ?? 0) as number) * 100).toFixed(1)}%`}
+            />
+            <Metric
+              label="成功数"
+              value={metrics.scraper_success_total ?? metrics.tmdb_success_total ?? 0}
+            />
+            <Metric
+              label="失败数"
+              value={metrics.scraper_failure_total ?? metrics.tmdb_failure_total ?? 0}
+            />
+          </div>
+        </SectionCard>
+      </div>
 
-      <section className="rounded-lg border border-white/10 bg-black p-5">
-        <h3 className="mb-4 text-sm font-medium text-white">缓存与失败记录</h3>
+      <SectionCard title="缓存与失败记录" description="管理刮削缓存和查看近期错误。">
         {cacheStats && (
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="总缓存条目" value={cacheStats.total_entries} />
             <Metric label="有结果条目" value={cacheStats.entries_with_result} />
             <Metric label="已过期条目" value={cacheStats.expired_entries} />
             <Metric label="总命中次数" value={cacheStats.total_hits} />
           </div>
         )}
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-3 border-b border-white/10 pb-4">
           <Button
             variant="secondary"
+            size="sm"
             onClick={() => setConfirmAction("clear-expired")}
             disabled={actionLoading}
           >
@@ -642,41 +710,51 @@ export function AdminScraperPanel() {
           </Button>
           <Button
             variant="destructive"
+            size="sm"
             onClick={() => setConfirmAction("clear-all")}
             disabled={actionLoading}
           >
             清除全部缓存
           </Button>
+          <div className="flex-1" />
           <Button
             variant="outline"
+            size="sm"
             onClick={() => setConfirmAction("clear-failures")}
             disabled={actionLoading || failures.length === 0}
           >
             清除失败记录
           </Button>
         </div>
+
         {failures.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-md border border-white/10">
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>名称</TableHead>
-                  <TableHead>类型</TableHead>
-                  <TableHead>尝试次数</TableHead>
-                  <TableHead>错误</TableHead>
-                  <TableHead>时间</TableHead>
+              <TableHeader className="bg-white/5">
+                <TableRow className="border-white/10 hover:bg-transparent">
+                  <TableHead className="font-medium text-slate-300">名称</TableHead>
+                  <TableHead className="font-medium text-slate-300">类型</TableHead>
+                  <TableHead className="font-medium text-slate-300">尝试次数</TableHead>
+                  <TableHead className="font-medium text-slate-300">错误</TableHead>
+                  <TableHead className="text-right font-medium text-slate-300">时间</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {failures.map((failure) => (
-                  <TableRow key={failure.id}>
-                    <TableCell className="max-w-[220px] truncate">{failure.item_name}</TableCell>
-                    <TableCell>{failure.item_type}</TableCell>
+                  <TableRow key={failure.id} className="border-white/10 hover:bg-white/[0.02]">
+                    <TableCell className="max-w-[220px] truncate font-medium">
+                      {failure.item_name}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="py-0 text-[10px] font-normal">
+                        {failure.item_type}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{failure.attempts}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-[320px] truncate text-xs">
+                    <TableCell className="max-w-[320px] truncate text-xs text-slate-400">
                       {failure.error}
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                    <TableCell className="text-right text-xs whitespace-nowrap text-slate-500">
                       {new Date(failure.created_at).toLocaleString()}
                     </TableCell>
                   </TableRow>
@@ -685,9 +763,11 @@ export function AdminScraperPanel() {
             </Table>
           </div>
         ) : (
-          <p className="text-muted-foreground text-xs">暂无失败记录。</p>
+          <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.01] py-8 text-center">
+            <p className="text-sm text-slate-500">暂无失败记录</p>
+          </div>
         )}
-      </section>
+      </SectionCard>
 
       <Modal
         open={confirmAction !== null}
@@ -716,10 +796,89 @@ export function AdminScraperPanel() {
   );
 }
 
+function CollapsibleCard({
+  title,
+  description,
+  defaultOpen = false,
+  headerAction,
+  children,
+}: {
+  title: string;
+  description?: string;
+  defaultOpen?: boolean;
+  headerAction?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/10 bg-black shadow-sm">
+      <div
+        className="flex cursor-pointer items-center justify-between p-5 transition-colors select-none hover:bg-white/[0.02]"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="flex-1 pr-4">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-white">{title}</h3>
+            {headerAction && <div onClick={(e) => e.stopPropagation()}>{headerAction}</div>}
+          </div>
+          {description && <p className="mt-1.5 text-xs text-slate-500">{description}</p>}
+        </div>
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-white/10">
+          {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        </div>
+      </div>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+          >
+            <div className="border-t border-white/5 p-5 pt-0">
+              <div className="pt-4">{children}</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  description,
+  headerAction,
+  children,
+  className,
+}: {
+  title: string;
+  description?: string;
+  headerAction?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={`rounded-lg border border-white/10 bg-black p-5 shadow-sm ${className || ""}`}
+    >
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          {description && <p className="mt-1.5 text-xs text-slate-500">{description}</p>}
+        </div>
+        {headerAction && <div>{headerAction}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <label className="text-muted-foreground mb-1 block text-xs">{label}</label>
+    <div className="space-y-1.5">
+      <label className="block text-xs font-medium text-slate-400">{label}</label>
       {children}
     </div>
   );
@@ -727,9 +886,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Metric({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded border border-white/5 bg-white/[0.02] px-4 py-3">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-1 text-xl font-medium text-white">{String(value)}</p>
+    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3 transition-colors hover:bg-white/[0.04]">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-white">{String(value)}</p>
     </div>
   );
 }
