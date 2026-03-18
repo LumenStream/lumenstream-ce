@@ -674,6 +674,19 @@ export function AdminRequestsPanel() {
                     MoviePilot 集成
                   </h4>
                   <div className="space-y-4">
+                    <SettingSwitch
+                      label="启用 MoviePilot Provider"
+                      checked={settings.moviepilot.enabled}
+                      onChange={(checked) =>
+                        setSettings((current) => ({
+                          ...current,
+                          moviepilot: { ...current.moviepilot, enabled: checked },
+                        }))
+                      }
+                    />
+                    <p className="text-muted-foreground text-xs leading-5">
+                      关闭后会保留连接参数，但连接测试和 Agent 工作流都会将 MoviePilot 视为禁用。
+                    </p>
                     <label className="block space-y-1.5">
                       <span className="text-sm font-medium">Base URL</span>
                       <Input

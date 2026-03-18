@@ -12,6 +12,7 @@ const adminListRequestsMock = vi.fn();
 const adminGetRequestMock = vi.fn();
 const adminGetAgentSettingsMock = vi.fn();
 const adminListAgentProvidersMock = vi.fn();
+const adminTestMoviePilotMock = vi.fn();
 
 vi.mock("@/lib/auth/use-auth-session", () => ({
   useAuthSession: () => ({ ready: true }),
@@ -24,7 +25,7 @@ vi.mock("@/lib/api/requests", () => ({
   adminListAgentProviders: (...args: unknown[]) => adminListAgentProvidersMock(...args),
   adminRetryRequest: vi.fn(),
   adminReviewRequest: vi.fn(),
-  adminTestMoviePilot: vi.fn(),
+  adminTestMoviePilot: (...args: unknown[]) => adminTestMoviePilotMock(...args),
   adminUpdateAgentSettings: vi.fn(),
 }));
 
@@ -50,6 +51,12 @@ function findButtonByText(container: HTMLElement, label: string): HTMLButtonElem
   return Array.from(container.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(label)
   ) as HTMLButtonElement | undefined;
+}
+
+function findLabelByText(container: HTMLElement, label: string): HTMLLabelElement | undefined {
+  return Array.from(container.querySelectorAll("label")).find((node) =>
+    node.textContent?.includes(label)
+  ) as HTMLLabelElement | undefined;
 }
 
 describe("AdminRequestsPanel", () => {
@@ -166,6 +173,7 @@ describe("AdminRequestsPanel", () => {
         checked_at: "2026-03-12T00:00:00Z",
       },
     ]);
+    adminTestMoviePilotMock.mockResolvedValue({ base_url: "https://moviepilot.example.com" });
   });
 
   afterEach(() => {
@@ -211,5 +219,41 @@ describe("AdminRequestsPanel", () => {
 
     expect(container.textContent).toContain("missing_episode_repair");
     expect(container.textContent).toContain("批准并重试");
+  });
+
+  it("toggles MoviePilot enabled state before connection tests", async () => {
+    await act(async () => {
+      root.render(<AdminRequestsPanel />);
+      await flushEffects();
+    });
+
+    await act(async () => {
+      findButtonByText(container, "系统设置")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+      await flushEffects();
+    });
+
+    expect(container.textContent).toContain("启用 MoviePilot Provider");
+
+    await act(async () => {
+      findLabelByText(container, "启用 MoviePilot Provider")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+      await flushEffects();
+    });
+
+    await act(async () => {
+      findButtonByText(container, "测试连接")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+      await flushEffects();
+    });
+
+    expect(adminTestMoviePilotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        moviepilot: expect.objectContaining({ enabled: false }),
+      })
+    );
   });
 });
