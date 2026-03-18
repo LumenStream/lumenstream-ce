@@ -1,16 +1,31 @@
+use anyhow::Context;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use ls_config::AgentLlmConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmParseResult {
+    #[serde(default)]
+    pub request_type: String,
     pub media_type: String,
     pub title: String,
+    #[serde(default)]
     pub season_numbers: Vec<i32>,
+    #[serde(default)]
     pub episode_numbers: Vec<i32>,
+    #[serde(default)]
+    pub requires_media_search: bool,
+    #[serde(default)]
+    pub preferred_sources: Vec<String>,
+    #[serde(default)]
+    pub avoid_sources: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+    #[serde(default)]
     pub is_ambiguous: bool,
+    #[serde(default)]
     pub original_text: String,
 }
 
@@ -57,31 +72,86 @@ impl LlmProvider {
         if !self.is_configured() {
             anyhow::bail!("LLM provider is not configured or disabled");
         }
-        let system_prompt = "You are an AI assistant specialized in parsing user requests for media downloads.
-Your task is to extract the intended media type, title, season numbers, and episode numbers from the user's natural language request.
-Output the result in strict JSON format.
 
-The JSON schema should be:
-{
-    \"media_type\": \"movie\" | \"series\" | \"unknown\",
-    \"title\": \"string\",
-    \"season_numbers\": [number],
-    \"episode_numbers\": [number],
-    \"is_ambiguous\": boolean
-}
+        let system_prompt = r#"You are an AI assistant specialized in parsing media-related user requests.
+Your task is to recognize the user's actual intent and call the provided tool exactly once.
 
-Rules:
-1. If the user mentions a movie, set media_type to 'movie'.
-2. If the user mentions a TV show, anime, or series, set media_type to 'series'.
-3. Extract the title as accurately as possible. If it's ambiguous, set is_ambiguous to true.
-4. Extract season and episode numbers if present. If not present, use empty arrays.
-5. If you cannot determine the media_type or title, set is_ambiguous to true.";
+Guidelines:
+1. Use request_type=feedback only when the text is clearly not asking the system to process any media title.
+2. If the user wants the system to search, replace source, refresh resource, download, 补档, 补集, 补季, 换源, or otherwise act on a media title, set requires_media_search=true.
+3. If the user mentions a movie, set media_type=movie. If the user mentions a TV show, anime, or series, set media_type=series.
+4. If the request is about missing episodes, use request_type=missing_episode. If it is about missing seasons, use request_type=missing_season. Otherwise use media_request for media-related intents.
+5. Extract the media title as accurately as possible.
+6. Put preferred platforms/providers into preferred_sources, and providers to avoid into avoid_sources.
+7. Put additional preferences like 4K, HDR, subtitles, ad-free, bitrate or quality into constraints.
+8. If the media title or type is unclear, set is_ambiguous=true.
+9. Always call the tool; do not answer in plain text."#;
 
-        let content = self.complete_json(system_prompt, text).await?;
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "request_type": {
+                    "type": "string",
+                    "enum": ["media_request", "missing_episode", "missing_season", "feedback"]
+                },
+                "media_type": {
+                    "type": "string",
+                    "enum": ["movie", "series", "unknown"]
+                },
+                "title": { "type": "string" },
+                "season_numbers": {
+                    "type": "array",
+                    "items": { "type": "integer" },
+                    "default": []
+                },
+                "episode_numbers": {
+                    "type": "array",
+                    "items": { "type": "integer" },
+                    "default": []
+                },
+                "requires_media_search": { "type": "boolean", "default": false },
+                "preferred_sources": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "avoid_sources": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "constraints": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "is_ambiguous": { "type": "boolean", "default": false }
+            },
+            "required": [
+                "request_type",
+                "media_type",
+                "title",
+                "season_numbers",
+                "episode_numbers",
+                "requires_media_search",
+                "preferred_sources",
+                "avoid_sources",
+                "constraints",
+                "is_ambiguous"
+            ],
+            "additionalProperties": false
+        });
 
-        let mut parsed: LlmParseResult = serde_json::from_str(&content)?;
+        let mut parsed: LlmParseResult = self
+            .complete_with_tool(
+                system_prompt,
+                text,
+                "parse_media_request_intent",
+                "Extract the user's intent, media entity and source preferences.",
+                schema,
+            )
+            .await?;
         parsed.original_text = text.to_string();
-
         Ok(parsed)
     }
 
@@ -93,47 +163,68 @@ Rules:
             anyhow::bail!("LLM provider is not configured or disabled");
         }
 
-        let system_prompt = "You are an autonomous media request agent.
-You must decide whether to download torrents, download multiple torrents, add a subscription, reject the request, or send it to manual review.
-Return strict JSON only.
+        let system_prompt = r#"You are an autonomous media request agent.
+You must inspect the provided request context and call the execution planning tool exactly once.
 
 Decision goals:
 1. Prefer torrents with the highest seeders.
 2. Never choose BluRay / Remux / BDMV / ISO disc-style content.
-3. Prefer HDR/HDR10+/HDR and 4K when available.
+3. Prefer HDR/HDR10+ and 4K when available.
 4. Avoid Dolby Vision / DoVi content.
 5. For movies, normally choose at most one torrent.
 6. For TV series, you may choose multiple torrents to cover as many episodes as possible.
 7. If the series is still ongoing, or current torrents cannot cover enough released episodes, set add_subscription=true.
 8. If no safe/usable torrent exists but subscription is appropriate, choose subscribe.
-9. If metadata indicates the movie is still in theaters and auto rejection is allowed by context, choose reject.
+9. If metadata indicates the movie is still in theaters and auto rejection is appropriate, choose reject.
 10. If the situation is ambiguous or risky, choose manual_review.
+11. Always call the tool; do not answer in plain text."#;
 
-JSON schema:
-{
-  \"action\": \"download\" | \"download_and_subscribe\" | \"subscribe\" | \"manual_review\" | \"reject\",
-  \"selected_indices\": [number],
-  \"add_subscription\": boolean,
-  \"reason\": \"string\",
-  \"subscription_reason\": \"string|null\",
-  \"reject_reason\": \"string|null\"
-}";
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["download", "download_and_subscribe", "subscribe", "manual_review", "reject"]
+                },
+                "selected_indices": {
+                    "type": "array",
+                    "items": { "type": "integer", "minimum": 0 },
+                    "default": []
+                },
+                "add_subscription": { "type": "boolean", "default": false },
+                "reason": { "type": "string" },
+                "subscription_reason": { "type": ["string", "null"] },
+                "reject_reason": { "type": ["string", "null"] }
+            },
+            "required": [
+                "action",
+                "selected_indices",
+                "add_subscription",
+                "reason",
+                "subscription_reason",
+                "reject_reason"
+            ],
+            "additionalProperties": false
+        });
 
-        let content = self
-            .complete_json(
-                system_prompt,
-                &serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string()),
-            )
-            .await?;
-
-        serde_json::from_str(&content).map_err(Into::into)
+        self.complete_with_tool(
+            system_prompt,
+            &serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string()),
+            "plan_media_request_execution",
+            "Decide whether to download, subscribe, reject or send the request to manual review.",
+            schema,
+        )
+        .await
     }
 
-    async fn complete_json(
+    async fn complete_with_tool<T: DeserializeOwned>(
         &self,
         system_prompt: &str,
         user_content: &str,
-    ) -> anyhow::Result<String> {
+        tool_name: &str,
+        tool_description: &str,
+        parameters_schema: Value,
+    ) -> anyhow::Result<T> {
         let endpoint = format!(
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
@@ -151,7 +242,22 @@ JSON schema:
                     "content": user_content
                 }
             ],
-            "response_format": { "type": "json_object" },
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": tool_description,
+                        "parameters": parameters_schema
+                    }
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "function": {
+                    "name": tool_name
+                }
+            },
             "temperature": 0.1
         });
 
@@ -162,21 +268,62 @@ JSON schema:
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
-            .await?;
+            .await
+            .context("failed to call LLM tool endpoint")?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             anyhow::bail!("LLM API request failed: {}", error_text);
         }
 
-        let result: Value = response.json().await?;
-        result
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("Invalid response format from LLM API"))
+        let result: Value = response
+            .json()
+            .await
+            .context("failed to parse LLM response JSON")?;
+        let arguments = extract_tool_arguments(&result, tool_name)?;
+        serde_json::from_str(&arguments).context("failed to deserialize tool arguments")
     }
+}
+
+fn extract_tool_arguments(response: &Value, expected_tool_name: &str) -> anyhow::Result<String> {
+    let message = response
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .context("missing choices[0].message in LLM response")?;
+
+    if let Some(arguments) = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|call| {
+            let function = call.get("function")?;
+            let name = function.get("name")?.as_str()?;
+            if name == expected_tool_name {
+                function.get("arguments")?.as_str().map(str::to_string)
+            } else {
+                None
+            }
+        })
+    {
+        return Ok(arguments);
+    }
+
+    if let Some(arguments) = message
+        .get("function_call")
+        .and_then(Value::as_object)
+        .and_then(|call| {
+            let name = call.get("name")?.as_str()?;
+            if name == expected_tool_name {
+                call.get("arguments")?.as_str().map(str::to_string)
+            } else {
+                None
+            }
+        })
+    {
+        return Ok(arguments);
+    }
+
+    anyhow::bail!("LLM response did not contain expected tool call: {expected_tool_name}")
 }

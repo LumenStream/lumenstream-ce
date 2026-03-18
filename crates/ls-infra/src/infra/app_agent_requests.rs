@@ -138,6 +138,23 @@ struct AgentMoviePilotSearchOutcome {
     exact_query: Option<MoviePilotExactSearchQuery>,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+struct AgentIntentAnalysis {
+    raw_text: String,
+    original_request_type: String,
+    effective_request_type: String,
+    title: String,
+    media_type: String,
+    season_numbers: Vec<i32>,
+    episode_numbers: Vec<i32>,
+    requires_media_search: bool,
+    preferred_sources: Vec<String>,
+    avoid_sources: Vec<String>,
+    constraints: Vec<String>,
+    parser: String,
+    is_ambiguous: bool,
+}
+
 impl AppInfra {
     pub async fn list_user_agent_requests(
         &self,
@@ -849,7 +866,7 @@ LIMIT 1
                 .await;
         }
 
-        if request.request_type != "media_request" {
+        if !agent_request_type_supports_media_search(&request.request_type) {
             return Ok(None);
         }
 
@@ -1076,56 +1093,72 @@ LIMIT 1
         };
 
         let cfg = self.config_snapshot().agent;
-        if request.tmdb_id.unwrap_or(0) == 0 && cfg.llm.enabled {
+        let raw_text = agent_request_raw_text(&request);
+        let mut intent = agent_heuristic_intent_analysis(&request);
+
+        if cfg.llm.enabled && !raw_text.trim().is_empty() {
             self.set_job_progress(job_id, "llm_parse", 1, 0, "正在进行 LLM 语义解析", json!({}))
                 .await?;
             if let Ok(llm) = LlmProvider::new(&cfg.llm) {
-                if let Ok(parsed) = llm.parse_intent(&request.content).await {
-                    let mut updated = false;
-                    if request.media_type.is_empty() || request.media_type == "unknown" {
-                        request.media_type = parsed.media_type.clone();
-                        updated = true;
-                    }
-                    if request.title.is_empty() {
-                        request.title = parsed.title.clone();
-                        updated = true;
-                    }
-                    if request.season_numbers.is_empty() && !parsed.season_numbers.is_empty() {
-                        request.season_numbers = parsed.season_numbers.clone();
-                        updated = true;
-                    }
-                    if request.episode_numbers.is_empty() && !parsed.episode_numbers.is_empty() {
-                        request.episode_numbers = parsed.episode_numbers.clone();
-                        updated = true;
-                    }
-
-                    if updated {
-                        sqlx::query(
-                            "UPDATE agent_requests SET media_type = $2, title = $3, season_numbers = $4, episode_numbers = $5, updated_at = now() WHERE id = $1"
-                        )
-                        .bind(request.id)
-                        .bind(&request.media_type)
-                        .bind(&request.title)
-                        .bind(json!(&request.season_numbers))
-                        .bind(json!(&request.episode_numbers))
-                        .execute(&self.pool)
-                        .await?;
-
-                        self.append_agent_request_event(
-                            request_id,
-                            "agent.llm_parsed",
-                            None,
-                            Some("system"),
-                            "已通过 LLM 解析意图",
-                            json!(parsed),
-                        )
-                        .await?;
+                if llm.is_configured() {
+                    match llm.parse_intent(&raw_text).await {
+                        Ok(parsed) => {
+                            agent_apply_llm_parse_result(&mut intent, &parsed);
+                            self.append_agent_request_event(
+                                request_id,
+                                "agent.llm_parsed",
+                                None,
+                                Some("system"),
+                                "已通过 LLM tool calling 完成意图识别",
+                                json!(parsed),
+                            )
+                            .await?;
+                        }
+                        Err(err) => {
+                            self.append_agent_request_event(
+                                request_id,
+                                "agent.llm_parse_failed",
+                                None,
+                                Some("system"),
+                                "LLM 意图识别失败，已回退启发式解析",
+                                json!({ "error": err.to_string() }),
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
         }
 
-        let tmdb_metadata = if request.request_type == "media_request" {
+        self.persist_agent_intent_analysis(&mut request, &intent).await?;
+
+        if !intent.requires_media_search && !agent_request_type_supports_media_search(&request.request_type) {
+            let result = json!({
+                "recognized_intent": intent,
+                "reason": "non_media_feedback",
+            });
+            self.update_request_state_with_event(
+                request_id,
+                USER_STATUS_ACTION_REQUIRED,
+                "review_required",
+                "manual_review",
+                false,
+                &request.admin_note,
+                "已识别为普通反馈，转人工处理",
+                &result,
+                None,
+                None,
+                "agent.feedback_triaged",
+                None,
+                Some("system"),
+                "该请求无需媒体搜索，已转人工反馈处理",
+                result.clone(),
+            )
+            .await?;
+            return Ok(result);
+        }
+
+        let tmdb_metadata = if agent_request_type_supports_media_search(&request.request_type) {
             self.set_job_progress(job_id, "tmdb", 1, 0, "正在匹配 TMDB 元数据", json!({}))
                 .await?;
             let resolved = self.resolve_agent_tmdb_metadata(&request).await?;
@@ -1137,11 +1170,14 @@ LIMIT 1
             None
         };
 
-        if request.request_type == "media_request" && request.tmdb_id.unwrap_or_default() <= 0 {
+        if agent_request_type_supports_media_search(&request.request_type)
+            && request.tmdb_id.unwrap_or_default() <= 0
+        {
             let result = json!({
                 "error": "tmdb metadata not resolved",
                 "title": request.title,
                 "media_type": request.media_type,
+                "recognized_intent": intent,
             });
             self.update_request_state_with_event(
                 request_id,
@@ -1311,7 +1347,20 @@ LIMIT 1
         let season = request.season_numbers.first().copied();
         let effective_media_type = agent_effective_media_type(&request.media_type, tmdb_metadata.as_ref());
         let best = search_outcome.best.clone();
+        let (preferred_sources, avoid_sources, constraints) =
+            agent_detect_source_preferences(&agent_request_raw_text(&request));
         let mut result_payload = json!({
+            "recognized_intent": {
+                "request_type": request.request_type,
+                "title": request.title,
+                "media_type": request.media_type,
+                "season_numbers": request.season_numbers,
+                "episode_numbers": request.episode_numbers,
+                "raw_text": agent_request_raw_text(&request),
+                "preferred_sources": preferred_sources,
+                "avoid_sources": avoid_sources,
+                "constraints": constraints,
+            },
             "search_success": !contexts.is_empty(),
             "search_message": if contexts.is_empty() { agent_last_search_error(Some(&json!(search_outcome.attempts.clone()))) } else { None::<String> },
             "result_count": contexts.len(),
@@ -1890,6 +1939,447 @@ VALUES (
             manual_actions,
         }
     }
+
+    async fn persist_agent_intent_analysis(
+        &self,
+        request: &mut AgentRequest,
+        analysis: &AgentIntentAnalysis,
+    ) -> anyhow::Result<()> {
+        let mut changed = false;
+
+        if request.request_type != analysis.effective_request_type
+            && normalize_agent_request_type(&analysis.effective_request_type).is_some()
+        {
+            request.request_type = analysis.effective_request_type.clone();
+            changed = true;
+        }
+
+        if !analysis.title.trim().is_empty()
+            && (request.title.trim().is_empty()
+                || request.request_type == "intake"
+                || agent_title_needs_normalization(&request.title))
+            && request.title.trim() != analysis.title.trim()
+        {
+            request.title = analysis.title.trim().to_string();
+            changed = true;
+        }
+
+        if matches!(analysis.media_type.as_str(), "movie" | "series")
+            && request.media_type != analysis.media_type
+        {
+            request.media_type = analysis.media_type.clone();
+            changed = true;
+        }
+
+        let season_numbers = normalize_int_list(&analysis.season_numbers);
+        if request.season_numbers != season_numbers {
+            request.season_numbers = season_numbers;
+            changed = true;
+        }
+
+        let episode_numbers = normalize_int_list(&analysis.episode_numbers);
+        if request.episode_numbers != episode_numbers {
+            request.episode_numbers = episode_numbers;
+            changed = true;
+        }
+
+        if changed {
+            sqlx::query(
+                r#"
+UPDATE agent_requests
+SET request_type = $2,
+    title = $3,
+    media_type = $4,
+    season_numbers = $5,
+    episode_numbers = $6,
+    updated_at = now()
+WHERE id = $1
+                "#,
+            )
+            .bind(request.id)
+            .bind(&request.request_type)
+            .bind(&request.title)
+            .bind(&request.media_type)
+            .bind(json!(&request.season_numbers))
+            .bind(json!(&request.episode_numbers))
+            .execute(&self.pool)
+            .await?;
+        }
+
+        self.append_agent_request_event(
+            request.id,
+            "agent.intent_recognized",
+            None,
+            Some("system"),
+            "Agent 已识别用户意图",
+            json!({
+                "raw_text": analysis.raw_text,
+                "original_request_type": analysis.original_request_type,
+                "effective_request_type": analysis.effective_request_type,
+                "title": analysis.title,
+                "media_type": analysis.media_type,
+                "season_numbers": analysis.season_numbers,
+                "episode_numbers": analysis.episode_numbers,
+                "requires_media_search": analysis.requires_media_search,
+                "preferred_sources": analysis.preferred_sources,
+                "avoid_sources": analysis.avoid_sources,
+                "constraints": analysis.constraints,
+                "parser": analysis.parser,
+                "is_ambiguous": analysis.is_ambiguous,
+            }),
+        )
+        .await?;
+
+        Ok(())
+    }
+}
+
+fn agent_request_raw_text(request: &AgentRequest) -> String {
+    let mut parts = Vec::new();
+    for raw in [&request.title, &request.content] {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || parts.iter().any(|existing: &String| existing == trimmed) {
+            continue;
+        }
+        parts.push(trimmed.to_string());
+    }
+    parts.join("\n")
+}
+
+fn agent_request_type_supports_media_search(request_type: &str) -> bool {
+    matches!(
+        request_type,
+        "media_request" | "missing_episode" | "missing_season"
+    )
+}
+
+fn agent_title_needs_normalization(title: &str) -> bool {
+    let trimmed = title.trim();
+    trimmed.is_empty()
+        || trimmed.len() > 40
+        || [
+            "资源",
+            "广告",
+            "奈飞",
+            "爱奇艺",
+            "能换",
+            "我要看",
+            "想看",
+            "求片",
+            "求剧",
+            "反馈",
+            "缺集",
+            "漏季",
+        ]
+        .iter()
+        .any(|keyword| trimmed.contains(keyword))
+}
+
+fn agent_extract_title_candidates_from_text(text: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let quote_regexes = [
+        Regex::new(r"《([^》]{1,80})》").expect("compile chinese title regex"),
+        Regex::new(r#"[“"]([^"”]{1,80})[”"]"#).expect("compile quote title regex"),
+    ];
+    for regex in quote_regexes {
+        for capture in regex.captures_iter(text) {
+            if let Some(value) = capture.get(1) {
+                candidates.push(value.as_str().trim().to_string());
+            }
+        }
+    }
+
+    let leading_noise = Regex::new(
+        r"^(?:我想看|我要看|想看|求片|求剧|求|请补一下|请补|请加一下|请加|麻烦补一下|麻烦加一下|反馈一下|能不能换成|能换成|能不能换|能换|换成|换)\s*",
+    )
+    .expect("compile leading noise regex");
+
+    for part in Regex::new(r"[，。！？!?；;\n]+")
+        .expect("compile split regex")
+        .split(text)
+    {
+        let mut segment = leading_noise.replace(part.trim(), "").trim().to_string();
+        if segment.is_empty() {
+            continue;
+        }
+        for separator in [
+            "的资源",
+            "资源",
+            "能换",
+            "换成",
+            "有广告",
+            "没字幕",
+            "无字幕",
+            "广告太多",
+            "太卡",
+            "看不了",
+            "播不了",
+            "无法播放",
+            "补档",
+            "补一下",
+            "补全",
+            "缺集",
+            "缺季",
+            "漏季",
+            "漏集",
+            "希望",
+            "最好",
+            "优先",
+            "不要",
+            "别用",
+            "别下",
+            "可以吗",
+            "么",
+            "吗",
+        ] {
+            if let Some(index) = segment.find(separator) {
+                segment = segment[..index].trim().to_string();
+                break;
+            }
+        }
+        let segment = segment
+            .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+            .trim_matches('：')
+            .trim();
+        if !segment.is_empty() && segment.len() <= 80 {
+            candidates.push(segment.to_string());
+        }
+    }
+
+    agent_dedup_strings(candidates)
+}
+
+fn agent_detect_source_preferences(raw_text: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let normalized = raw_text.to_ascii_lowercase();
+    let mut preferred = Vec::new();
+    let mut avoid = Vec::new();
+    let mut constraints = Vec::new();
+
+    for (display, aliases) in [
+        ("Netflix", &["奈飞", "網飛", "netflix"][..]),
+        ("iQIYI", &["爱奇艺", "iqiyi", " iq ", "iq."][..]),
+        ("Tencent Video", &["腾讯", "腾讯视频", "wetv"][..]),
+        ("Youku", &["优酷", "youku"][..]),
+        ("Disney+", &["disney+", "迪士尼+"][..]),
+    ] {
+        let mentioned = aliases.iter().any(|alias| {
+            raw_text.contains(alias) || normalized.contains(&alias.to_ascii_lowercase())
+        });
+        if !mentioned {
+            continue;
+        }
+
+        let prefer_hit = aliases.iter().any(|alias| {
+            raw_text.contains(&format!("换{alias}"))
+                || raw_text.contains(&format!("用{alias}"))
+                || raw_text.contains(&format!("优先{alias}"))
+                || raw_text.contains(&format!("想要{alias}"))
+                || normalized.contains(&format!("prefer {}", alias.to_ascii_lowercase()))
+        });
+        let avoid_hit = aliases.iter().any(|alias| {
+            raw_text.contains(&format!("{alias}有广告"))
+                || raw_text.contains(&format!("不要{alias}"))
+                || raw_text.contains(&format!("别用{alias}"))
+                || normalized.contains(&format!("avoid {}", alias.to_ascii_lowercase()))
+        });
+
+        if prefer_hit {
+            preferred.push(display.to_string());
+        }
+        if avoid_hit {
+            avoid.push(display.to_string());
+        }
+    }
+
+    for (keyword, label) in [
+        ("4k", "4K"),
+        ("2160", "4K"),
+        ("hdr", "HDR"),
+        ("hdr10", "HDR10"),
+        ("广告", "避免广告"),
+        ("字幕", "字幕"),
+    ] {
+        if normalized.contains(keyword) || raw_text.contains(keyword) {
+            constraints.push(label.to_string());
+        }
+    }
+
+    (
+        agent_dedup_strings(preferred),
+        agent_dedup_strings(avoid),
+        agent_dedup_strings(constraints),
+    )
+}
+
+fn agent_guess_media_type_from_text(raw_text: &str, request: &AgentRequest) -> String {
+    if request.media_type.eq_ignore_ascii_case("movie") || request.media_type.eq_ignore_ascii_case("series") {
+        return request.media_type.clone();
+    }
+    let normalized = raw_text.to_ascii_lowercase();
+    if !request.season_numbers.is_empty()
+        || !request.episode_numbers.is_empty()
+        || ["第", "季", "集", "剧", "动漫", "番"].iter().any(|keyword| raw_text.contains(keyword))
+    {
+        return "series".to_string();
+    }
+    if raw_text.contains("电影") || normalized.contains("movie") || normalized.contains("film") {
+        return "movie".to_string();
+    }
+    "unknown".to_string()
+}
+
+fn agent_guess_request_type_from_text(
+    request: &AgentRequest,
+    raw_text: &str,
+    has_title: bool,
+    season_numbers: &[i32],
+    episode_numbers: &[i32],
+) -> String {
+    if agent_request_type_supports_media_search(&request.request_type) {
+        return request.request_type.clone();
+    }
+
+    let missing_keywords = ["缺", "漏", "少", "不全", "missing", "lack"];
+    let has_missing_keyword = missing_keywords.iter().any(|keyword| raw_text.contains(keyword));
+    if has_missing_keyword && !episode_numbers.is_empty() {
+        return "missing_episode".to_string();
+    }
+    if has_missing_keyword && !season_numbers.is_empty() {
+        return "missing_season".to_string();
+    }
+    if has_title {
+        return "media_request".to_string();
+    }
+    "feedback".to_string()
+}
+
+fn agent_merge_string_lists(existing: &[String], incoming: &[String]) -> Vec<String> {
+    let mut merged = existing.to_vec();
+    merged.extend_from_slice(incoming);
+    agent_dedup_strings(merged)
+}
+
+fn agent_heuristic_intent_analysis(request: &AgentRequest) -> AgentIntentAnalysis {
+    let raw_text = agent_request_raw_text(request);
+    let title_candidates = agent_extract_title_candidates_from_text(&raw_text);
+    let title = title_candidates
+        .first()
+        .cloned()
+        .or_else(|| (!agent_title_needs_normalization(&request.title)).then(|| request.title.trim().to_string()))
+        .unwrap_or_default();
+    let season_numbers = normalize_int_list(&request.season_numbers);
+    let episode_numbers = normalize_int_list(&request.episode_numbers);
+    let media_type = agent_guess_media_type_from_text(&raw_text, request);
+    let effective_request_type = agent_guess_request_type_from_text(
+        request,
+        &raw_text,
+        !title.is_empty(),
+        &season_numbers,
+        &episode_numbers,
+    );
+    let requires_media_search = agent_request_type_supports_media_search(&effective_request_type)
+        || (!title.is_empty()
+            && [
+                "求",
+                "想看",
+                "我要看",
+                "资源",
+                "换源",
+                "换",
+                "补",
+                "下载",
+                "没有",
+                "缺",
+                "漏",
+            ]
+            .iter()
+            .any(|keyword| raw_text.contains(keyword)));
+    let (preferred_sources, avoid_sources, constraints) =
+        agent_detect_source_preferences(&raw_text);
+
+    AgentIntentAnalysis {
+        raw_text,
+        original_request_type: request.request_type.clone(),
+        effective_request_type,
+        title,
+        media_type,
+        season_numbers,
+        episode_numbers,
+        requires_media_search,
+        preferred_sources,
+        avoid_sources,
+        constraints,
+        parser: "heuristic".to_string(),
+        is_ambiguous: false,
+    }
+}
+
+fn agent_apply_llm_parse_result(
+    analysis: &mut AgentIntentAnalysis,
+    parsed: &LlmParseResult,
+) {
+    analysis.parser = "llm".to_string();
+    analysis.is_ambiguous = parsed.is_ambiguous;
+    if let Some(request_type) = normalize_agent_request_type(&parsed.request_type) {
+        analysis.effective_request_type = request_type.to_string();
+    }
+    if !parsed.title.trim().is_empty() {
+        analysis.title = parsed.title.trim().to_string();
+    }
+    if matches!(parsed.media_type.as_str(), "movie" | "series") {
+        analysis.media_type = parsed.media_type.clone();
+    }
+    if !parsed.season_numbers.is_empty() {
+        analysis.season_numbers = normalize_int_list(&parsed.season_numbers);
+    }
+    if !parsed.episode_numbers.is_empty() {
+        analysis.episode_numbers = normalize_int_list(&parsed.episode_numbers);
+    }
+    if parsed.requires_media_search {
+        analysis.requires_media_search = true;
+    }
+    analysis.preferred_sources =
+        agent_merge_string_lists(&analysis.preferred_sources, &parsed.preferred_sources);
+    analysis.avoid_sources =
+        agent_merge_string_lists(&analysis.avoid_sources, &parsed.avoid_sources);
+    analysis.constraints = agent_merge_string_lists(&analysis.constraints, &parsed.constraints);
+    if analysis.effective_request_type == "feedback"
+        && (analysis.requires_media_search || !analysis.title.trim().is_empty())
+    {
+        analysis.effective_request_type = agent_guess_request_type_from_text(
+            &AgentRequest {
+                request_type: "intake".to_string(),
+                source: String::new(),
+                user_id: None,
+                title: analysis.title.clone(),
+                content: analysis.raw_text.clone(),
+                media_type: analysis.media_type.clone(),
+                tmdb_id: None,
+                media_item_id: None,
+                series_id: None,
+                season_numbers: analysis.season_numbers.clone(),
+                episode_numbers: analysis.episode_numbers.clone(),
+                status_user: String::new(),
+                status_admin: String::new(),
+                agent_stage: String::new(),
+                priority: 0,
+                auto_handled: false,
+                admin_note: String::new(),
+                agent_note: String::new(),
+                provider_payload: json!({}),
+                provider_result: json!({}),
+                last_error: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                closed_at: None,
+                id: Uuid::nil(),
+            },
+            &analysis.raw_text,
+            !analysis.title.is_empty(),
+            &analysis.season_numbers,
+            &analysis.episode_numbers,
+        );
+    }
 }
 
 fn agent_collect_request_titles(request: &AgentRequest) -> Vec<String> {
@@ -1905,6 +2395,7 @@ fn agent_collect_request_titles(request: &AgentRequest) -> Vec<String> {
             titles.push(normalized);
         }
     }
+    titles.extend(agent_extract_title_candidates_from_text(&agent_request_raw_text(request)));
     agent_dedup_strings(titles)
 }
 
@@ -2310,6 +2801,7 @@ fn agent_context_candidate_summary(index: usize, context: &MoviePilotContext) ->
         "season_episode": season_episode,
         "episode_range": episode_range,
         "year": meta.map(|value| value.year.clone()).unwrap_or_default(),
+        "source": meta.map(|value| value.source.clone()).unwrap_or_default(),
         "cn_name": meta.map(|value| value.title.clone()).unwrap_or_default(),
         "en_name": meta.map(|value| value.en_title.clone()).unwrap_or_default(),
         "is_disc_like": agent_is_disc_like(&title_upper),
@@ -2347,6 +2839,32 @@ fn agent_is_4k_candidate(meta: Option<&MoviePilotMediaInfo>, title_upper: &str) 
     .unwrap_or(false)
         || title_upper.contains("2160")
         || title_upper.contains("4K")
+}
+
+fn agent_source_aliases(source_name: &str) -> &'static [&'static str] {
+    match source_name {
+        "Netflix" => &["NETFLIX", "NF", "奈飞", "網飛"],
+        "iQIYI" => &["IQIYI", "IQ", "爱奇艺"],
+        "Tencent Video" => &["TENCENT", "WETV", "腾讯"],
+        "Youku" => &["YOUKU", "优酷"],
+        "Disney+" => &["DISNEY+", "DISNEYPLUS", "迪士尼"],
+        _ => &[],
+    }
+}
+
+fn agent_context_matches_source(context: &MoviePilotContext, source_name: &str) -> bool {
+    let meta = context.meta_info.as_ref().or(context.media_info.as_ref());
+    let haystack = format!(
+        "{} {} {} {}",
+        meta.map(|value| value.source.as_str()).unwrap_or_default(),
+        context.torrent_info.title,
+        context.torrent_info.site_name,
+        context.torrent_info.labels.join(" ")
+    )
+    .to_ascii_uppercase();
+    agent_source_aliases(source_name)
+        .iter()
+        .any(|alias| haystack.contains(&alias.to_ascii_uppercase()))
 }
 
 fn agent_tmdb_watch_provider_names(payload: Option<&Value>) -> Vec<String> {
@@ -2484,6 +3002,48 @@ fn agent_fallback_execution_plan(
             .then_with(|| right.torrent_info.size.total_cmp(&left.torrent_info.size))
     });
 
+    let raw_text = agent_request_raw_text(request);
+    let (preferred_sources, avoid_sources, _) = agent_detect_source_preferences(&raw_text);
+    if !avoid_sources.is_empty() {
+        let filtered = ranked
+            .iter()
+            .copied()
+            .filter(|(_, context)| {
+                !avoid_sources
+                    .iter()
+                    .any(|source| agent_context_matches_source(context, source))
+            })
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            return LlmAgentExecutionPlan {
+                action: "manual_review".to_string(),
+                reason: "当前资源均命中用户明确规避的来源，转人工处理".to_string(),
+                ..Default::default()
+            };
+        }
+        ranked = filtered;
+    }
+
+    if !preferred_sources.is_empty() {
+        let preferred_only = ranked
+            .iter()
+            .copied()
+            .filter(|(_, context)| {
+                preferred_sources
+                    .iter()
+                    .any(|source| agent_context_matches_source(context, source))
+            })
+            .collect::<Vec<_>>();
+        if preferred_only.is_empty() {
+            return LlmAgentExecutionPlan {
+                action: "manual_review".to_string(),
+                reason: "未找到满足用户来源偏好的资源，转人工处理".to_string(),
+                ..Default::default()
+            };
+        }
+        ranked = preferred_only;
+    }
+
     let selected_indices = if request.media_type.eq_ignore_ascii_case("series") {
         ranked
             .iter()
@@ -2514,14 +3074,21 @@ fn agent_build_execution_context(
     tmdb: Option<&AgentResolvedTmdbMetadata>,
     contexts: &[MoviePilotContext],
 ) -> Value {
+    let raw_text = agent_request_raw_text(request);
+    let (preferred_sources, avoid_sources, constraints) =
+        agent_detect_source_preferences(&raw_text);
     json!({
         "request": {
             "title": request.title,
             "content": request.content,
+            "raw_text": raw_text,
             "media_type": request.media_type,
             "tmdb_id": request.tmdb_id,
             "season_numbers": request.season_numbers,
             "episode_numbers": request.episode_numbers,
+            "preferred_sources": preferred_sources,
+            "avoid_sources": avoid_sources,
+            "constraints": constraints,
         },
         "tmdb": tmdb.map(|value| json!({
             "kind": value.kind,
@@ -2772,6 +3339,54 @@ mod agent_request_tests {
         let plan = agent_default_no_result_plan(&request, Some(&tmdb));
         assert_eq!(plan.action, "manual_review");
     }
+
+    fn sample_context(index: i32, source: &str, seeders: i32) -> MoviePilotContext {
+        MoviePilotContext {
+            meta_info: Some(MoviePilotMediaInfo {
+                source: source.to_string(),
+                title: format!("资源 {index}"),
+                ..Default::default()
+            }),
+            media_info: None,
+            torrent_info: ls_agent::MoviePilotTorrentInfo {
+                title: format!("资源 {index}"),
+                site_name: format!("site-{index}"),
+                seeders,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn fallback_plan_respects_preferred_source_and_goes_manual_if_missing() {
+        let mut request = sample_request();
+        request.content = "逐玉的资源能换奈飞的资源么，爱奇艺的有广告。".to_string();
+        request.media_type = "series".to_string();
+
+        let plan = agent_fallback_execution_plan(
+            &request,
+            None,
+            &[sample_context(1, "IQ", 100), sample_context(2, "YOUKU", 80)],
+        );
+
+        assert_eq!(plan.action, "manual_review");
+    }
+
+    #[test]
+    fn fallback_plan_filters_avoided_source_when_alternative_exists() {
+        let mut request = sample_request();
+        request.content = "这个剧不要爱奇艺源".to_string();
+        request.media_type = "movie".to_string();
+
+        let plan = agent_fallback_execution_plan(
+            &request,
+            None,
+            &[sample_context(1, "IQ", 100), sample_context(2, "NF", 20)],
+        );
+
+        assert_eq!(plan.action, "download");
+        assert_eq!(plan.selected_indices, vec![1]);
+    }
 }
 
 fn agent_json_i32_list(value: &Value) -> Vec<i32> {
@@ -2793,6 +3408,7 @@ fn agent_value_to_i64(value: &Value) -> Option<i64> {
 
 fn normalize_agent_request_type(raw: &str) -> Option<&'static str> {
     match raw.trim() {
+        "intake" => Some("intake"),
         "media_request" => Some("media_request"),
         "feedback" => Some("feedback"),
         "missing_episode" => Some("missing_episode"),

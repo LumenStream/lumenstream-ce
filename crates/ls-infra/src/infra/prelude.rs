@@ -17,8 +17,9 @@ use md5::compute as md5_compute;
 use meilisearch_sdk::{client::Client as MeiliClient, indexes::Index as MeiliIndex};
 use ls_agent::{
     AgentProviderCapability, AgentProviderStatus, AgentRequest, AgentRequestCreateInput,
-    AgentRequestDetail, AgentRequestEvent, LlmAgentExecutionPlan, LlmProvider, MoviePilotProvider,
-    USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING, admin_status_to_user_status,
+    AgentRequestDetail, AgentRequestEvent, LlmAgentExecutionPlan, LlmParseResult, LlmProvider,
+    MoviePilotProvider, USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING,
+    admin_status_to_user_status,
     MoviePilotContext, MoviePilotExactSearchQuery, MoviePilotMediaInfo,
     build_download_payload_with_context,
     build_subscription_payload, choose_best_result, decode_search_contexts,

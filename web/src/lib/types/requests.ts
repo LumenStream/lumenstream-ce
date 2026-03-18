@@ -1,4 +1,9 @@
-export type AgentRequestType = "media_request" | "feedback" | "missing_episode" | "missing_season";
+export type AgentRequestType =
+  | "intake"
+  | "media_request"
+  | "feedback"
+  | "missing_episode"
+  | "missing_season";
 
 export type AgentRequestUserStatus =
   | "processing"
@@ -27,8 +32,8 @@ export interface AgentRequest {
   auto_handled: boolean;
   admin_note: string;
   agent_note: string;
-  moviepilot_payload: Record<string, unknown>;
-  moviepilot_result: Record<string, unknown>;
+  provider_payload: Record<string, unknown>;
+  provider_result: Record<string, unknown>;
   last_error?: string | null;
   created_at: string;
   updated_at: string;

@@ -7,6 +7,7 @@ import {
   XCircle,
   Info,
   AlertCircle,
+  Sparkles,
 } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/domain/DataState";
@@ -37,15 +38,16 @@ import type {
   AgentRequestDetail,
   AgentWorkflowStepState,
 } from "@/lib/types/requests";
-import { cn, formatDate, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { cn, formatDate, formatDuration, formatRelativeTime } from "@/lib/utils";
 import { mapToUserStage } from "@/lib/utils/workflow-display";
 
-const REQUEST_TYPE_OPTIONS: Array<{ value: AgentCreateRequest["request_type"]; label: string }> = [
-  { value: "media_request", label: "求片 / 求剧" },
-  { value: "feedback", label: "反馈" },
-  { value: "missing_episode", label: "缺集" },
-  { value: "missing_season", label: "漏季" },
-];
+const REQUEST_TYPE_LABELS: Record<string, string> = {
+  intake: "智能受理",
+  media_request: "求片 / 求剧",
+  feedback: "反馈",
+  missing_episode: "缺集",
+  missing_season: "漏季",
+};
 
 function statusVariant(
   status: string
@@ -72,7 +74,7 @@ function statusLabel(status: string): string {
 }
 
 function requestTypeLabel(type: string): string {
-  return REQUEST_TYPE_OPTIONS.find((item) => item.value === type)?.label ?? type;
+  return REQUEST_TYPE_LABELS[type] ?? type;
 }
 
 function parseNumberList(raw: string): number[] {
@@ -81,6 +83,10 @@ function parseNumberList(raw: string): number[] {
     .map((part) => Number(part.trim()))
     .filter((part) => Number.isFinite(part) && part > 0)
     .map((part) => Math.floor(part));
+}
+
+function hasObjectContent(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && Object.keys(value as object).length > 0;
 }
 
 export function RequestsCenter() {
@@ -97,9 +103,7 @@ export function RequestsCenter() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [form, setForm] = useState({
-    request_type: "media_request" as AgentCreateRequest["request_type"],
-    title: "",
-    content: "",
+    raw_text: "",
     media_type: "unknown",
     tmdb_id: "",
     season_numbers: "",
@@ -139,39 +143,34 @@ export function RequestsCenter() {
     void reload();
   }, [ready, reload]);
 
-  useEffect(() => {
-    const shouldAutoExpand = ["missing_episode", "missing_season"].includes(form.request_type);
-    setShowAdvanced(shouldAutoExpand);
-  }, [form.request_type]);
-
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.title.trim()) {
-      toast.warning("标题不能为空");
+    if (!form.raw_text.trim()) {
+      toast.warning("请先告诉 Agent 你想做什么");
       return;
     }
     setSubmitting(true);
     try {
-      const created = await createMyRequest({
-        request_type: form.request_type,
-        title: form.title.trim(),
-        content: form.content.trim(),
+      const payload: AgentCreateRequest = {
+        request_type: "intake",
+        title: form.raw_text.trim(),
+        content: form.raw_text.trim(),
         media_type: form.media_type.trim(),
         tmdb_id: form.tmdb_id.trim() ? Number(form.tmdb_id.trim()) : null,
         season_numbers: parseNumberList(form.season_numbers),
         episode_numbers: parseNumberList(form.episode_numbers),
-      });
+      };
+      const created = await createMyRequest(payload);
       setRequests((current) => [created.request, ...current]);
       setForm({
-        request_type: "media_request",
-        title: "",
-        content: "",
+        raw_text: "",
         media_type: "unknown",
         tmdb_id: "",
         season_numbers: "",
         episode_numbers: "",
       });
       setShowForm(false);
+      setShowAdvanced(false);
       toast.success("请求已提交");
       void onSelect(created.request.id);
     } catch (cause) {
@@ -217,6 +216,7 @@ export function RequestsCenter() {
   }
 
   if (detail || detailLoading) {
+    const audit = detail?.request.provider_result;
     return (
       <div className="animate-in fade-in slide-in-from-bottom-4 mx-auto max-w-5xl space-y-6 duration-300">
         <Button
@@ -318,14 +318,16 @@ export function RequestsCenter() {
                 {detail.request.content && (
                   <div className="bg-card rounded-xl border p-5 shadow-sm">
                     <h3 className="mb-4 flex items-center gap-2 font-semibold">
-                      <Info className="text-muted-foreground h-4 w-4" /> 请求说明
+                      <Info className="text-muted-foreground h-4 w-4" /> 原始提交内容
                     </h3>
-                    <div className="mb-5">
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {detail.request.content}
-                      </p>
-                    </div>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {detail.request.content}
+                    </p>
                   </div>
+                )}
+
+                {hasObjectContent(audit) && (
+                  <AuditInsightCard title="Agent 审计视图" payload={audit} />
                 )}
 
                 {detail.request.admin_note && (
@@ -351,7 +353,9 @@ export function RequestsCenter() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">求片与反馈</h1>
-          <p className="text-muted-foreground mt-1 text-sm">统一提交求片、缺集、漏季和问题反馈。</p>
+          <p className="text-muted-foreground mt-1 text-sm">
+            直接用自然语言告诉 Agent 你的诉求，它会自动识别意图并处理。
+          </p>
         </div>
         <div className="flex items-center gap-6">
           <div className="mr-4 hidden items-center gap-4 text-sm sm:flex">
@@ -384,43 +388,34 @@ export function RequestsCenter() {
       {showForm && (
         <div className="animate-in fade-in slide-in-from-top-4 bg-card rounded-xl border p-6 shadow-sm duration-300">
           <div className="mb-6">
-            <h2 className="text-lg font-semibold">填写请求详情</h2>
+            <h2 className="text-lg font-semibold">告诉 Agent 你想做什么</h2>
             <p className="text-muted-foreground text-sm">
-              提供尽可能详细的信息，以便系统能更快地自动处理。
+              例如：JOJO的奇妙冒险的第五季资源能换奈飞的资源么。 或 基地第二季缺第5集。
             </p>
           </div>
           <form onSubmit={(event) => void onSubmit(event)} className="space-y-6">
-            <div className="grid gap-6 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">请求类型</label>
-                <select
-                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                  value={form.request_type}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      request_type: e.target.value as AgentCreateRequest["request_type"],
-                    }))
-                  }
-                >
-                  {REQUEST_TYPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                需求描述 <span className="text-rose-500">*</span>
+              </label>
+              <Textarea
+                className="min-h-[120px] resize-y"
+                value={form.raw_text}
+                onChange={(e) => setForm((current) => ({ ...current, raw_text: e.target.value }))}
+                placeholder="直接描述你的需求，Agent 会自动判断是求片、换源、补集、漏季还是普通反馈。"
+                required
+              />
+            </div>
+
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm">
+              <div className="mb-2 flex items-center gap-2 font-medium text-cyan-700 dark:text-cyan-300">
+                <Sparkles className="h-4 w-4" /> Agent 会自动完成这些步骤
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  标题 <span className="text-rose-500">*</span>
-                </label>
-                <Input
-                  value={form.title}
-                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                  placeholder="例如：基地 第二季缺集"
-                  required
-                />
-              </div>
+              <ul className="text-muted-foreground list-disc space-y-1 pl-5">
+                <li>识别你是在求片、换源、补集、漏季还是提交反馈</li>
+                <li>自动匹配 TMDB 元数据并拼接 MoviePilot 精确搜索</li>
+                <li>展示识别结果、搜索参数、候选资源和最终动作</li>
+              </ul>
             </div>
 
             <div className="space-y-2">
@@ -440,7 +435,9 @@ export function RequestsCenter() {
                   <select
                     className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none"
                     value={form.media_type}
-                    onChange={(e) => setForm((f) => ({ ...f, media_type: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((current) => ({ ...current, media_type: e.target.value }))
+                    }
                   >
                     <option value="unknown">未指定</option>
                     <option value="movie">电影</option>
@@ -452,7 +449,9 @@ export function RequestsCenter() {
                   <Input
                     className="h-9"
                     value={form.tmdb_id}
-                    onChange={(e) => setForm((f) => ({ ...f, tmdb_id: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((current) => ({ ...current, tmdb_id: e.target.value }))
+                    }
                     placeholder="可选"
                   />
                 </div>
@@ -461,7 +460,9 @@ export function RequestsCenter() {
                   <Input
                     className="h-9"
                     value={form.season_numbers}
-                    onChange={(e) => setForm((f) => ({ ...f, season_numbers: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((current) => ({ ...current, season_numbers: e.target.value }))
+                    }
                     placeholder="如: 1,2"
                   />
                 </div>
@@ -470,22 +471,14 @@ export function RequestsCenter() {
                   <Input
                     className="h-9"
                     value={form.episode_numbers}
-                    onChange={(e) => setForm((f) => ({ ...f, episode_numbers: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((current) => ({ ...current, episode_numbers: e.target.value }))
+                    }
                     placeholder="如: 5,6"
                   />
                 </div>
               </div>
             )}
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">补充说明</label>
-              <Textarea
-                className="min-h-[100px] resize-y"
-                value={form.content}
-                onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
-                placeholder="例如：已完结但库里只有前四集；或者希望优先 4K / 中文字幕。"
-              />
-            </div>
 
             <div className="flex justify-end gap-3 pt-2">
               <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
@@ -504,7 +497,7 @@ export function RequestsCenter() {
           <div className="py-16">
             <EmptyState
               title="还没有请求"
-              description="提交第一个求片或反馈后，这里会展示实时状态。"
+              description="提交第一个请求后，这里会展示 Agent 的实时处理状态。"
             />
           </div>
         ) : (
@@ -585,6 +578,51 @@ function InfoStat({ label, value }: { label: string; value: string }) {
     <div className="bg-background/50 rounded-xl border p-4 shadow-sm">
       <p className="text-muted-foreground text-xs font-medium">{label}</p>
       <p className="mt-1.5 text-base font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function AuditInsightCard({ title, payload }: { title: string; payload: Record<string, unknown> }) {
+  const recognizedIntent = hasObjectContent(payload.recognized_intent)
+    ? (payload.recognized_intent as Record<string, unknown>)
+    : null;
+  const exactQuery = hasObjectContent(payload.exact_query)
+    ? (payload.exact_query as Record<string, unknown>)
+    : null;
+  const agentPlan = hasObjectContent(payload.agent_plan)
+    ? (payload.agent_plan as Record<string, unknown>)
+    : null;
+
+  return (
+    <div className="bg-card rounded-xl border p-5 shadow-sm">
+      <h3 className="mb-4 font-semibold">{title}</h3>
+      <div className="space-y-4">
+        {recognizedIntent && <AuditBlock label="意图识别" value={recognizedIntent} />}
+        {exactQuery && <AuditBlock label="精确搜索参数" value={exactQuery} />}
+        {agentPlan && <AuditBlock label="执行计划" value={agentPlan} />}
+        {Array.isArray(payload.selected_results) && payload.selected_results.length > 0 && (
+          <AuditBlock label="已选资源" value={payload.selected_results} />
+        )}
+        {hasObjectContent(payload.subscription) && (
+          <AuditBlock label="订阅结果" value={payload.subscription as Record<string, unknown>} />
+        )}
+        {!recognizedIntent && !exactQuery && !agentPlan && (
+          <AuditBlock label="原始审计数据" value={payload} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AuditBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div>
+      <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wider uppercase">
+        {label}
+      </p>
+      <pre className="bg-muted/50 overflow-x-auto rounded-lg p-3 text-xs break-all whitespace-pre-wrap">
+        {JSON.stringify(value, null, 2)}
+      </pre>
     </div>
   );
 }

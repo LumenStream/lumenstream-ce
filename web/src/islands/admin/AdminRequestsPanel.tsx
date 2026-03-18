@@ -46,6 +46,14 @@ import type {
 } from "@/lib/types/requests";
 import { cn, formatDate, formatRelativeTime } from "@/lib/utils";
 
+const REQUEST_TYPE_LABELS: Record<string, string> = {
+  intake: "智能受理",
+  media_request: "求片 / 求剧",
+  feedback: "反馈",
+  missing_episode: "缺集",
+  missing_season: "漏季",
+};
+
 const REVIEW_ACTIONS: Array<{ value: AgentReviewRequest["action"]; label: string }> = [
   { value: "approve", label: "批准并重试" },
   { value: "manual_complete", label: "手动完成" },
@@ -60,6 +68,14 @@ function requestStatusVariant(
   if (status === "failed" || status === "rejected") return "danger";
   if (status === "review_required") return "secondary";
   return "outline";
+}
+
+function requestTypeLabel(type: string): string {
+  return REQUEST_TYPE_LABELS[type] ?? type;
+}
+
+function hasObjectContent(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && Object.keys(value as object).length > 0;
 }
 
 function makeDefaultAgentSettings(): AgentSettings {
@@ -253,7 +269,7 @@ export function AdminRequestsPanel() {
                 <h2 className="text-2xl font-bold tracking-tight">{detail.request.title}</h2>
                 <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-3 text-sm">
                   <Badge variant="outline" className="font-normal">
-                    {detail.request.request_type}
+                    {requestTypeLabel(detail.request.request_type)}
                   </Badge>
                   <span>·</span>
                   <span>{formatDate(detail.request.created_at)}</span>
@@ -405,6 +421,13 @@ export function AdminRequestsPanel() {
                     )}
                   </div>
                 )}
+
+                {hasObjectContent(detail.request.provider_result) && (
+                  <div className="bg-card rounded-xl border p-5 shadow-sm">
+                    <h3 className="mb-4 font-semibold">Agent 审计视图</h3>
+                    <AuditSummary payload={detail.request.provider_result} />
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -505,7 +528,7 @@ export function AdminRequestsPanel() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="bg-background/50 font-normal">
-                          {request.request_type}
+                          {requestTypeLabel(request.request_type)}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -807,6 +830,42 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="bg-background/50 rounded-xl border p-4 shadow-sm">
       <p className="text-muted-foreground text-xs font-medium">{label}</p>
       <p className="mt-1.5 text-base font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function AuditSummary({ payload }: { payload: Record<string, unknown> }) {
+  const sections = (
+    [
+      ["意图识别", payload.recognized_intent] as [string, unknown],
+      ["精确搜索参数", payload.exact_query] as [string, unknown],
+      ["执行计划", payload.agent_plan] as [string, unknown],
+      ["已选资源", payload.selected_results] as [string, unknown],
+      ["订阅结果", payload.subscription] as [string, unknown],
+    ] satisfies Array<[string, unknown]>
+  ).filter(([, value]) => {
+    if (Array.isArray(value)) return value.length > 0;
+    return hasObjectContent(value);
+  });
+
+  return (
+    <div className="space-y-4">
+      {sections.length === 0 ? (
+        <pre className="bg-muted/50 overflow-x-auto rounded-lg p-3 text-xs break-all whitespace-pre-wrap">
+          {JSON.stringify(payload, null, 2)}
+        </pre>
+      ) : (
+        sections.map(([label, value]) => (
+          <div key={label}>
+            <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wider uppercase">
+              {label}
+            </p>
+            <pre className="bg-muted/50 overflow-x-auto rounded-lg p-3 text-xs break-all whitespace-pre-wrap">
+              {JSON.stringify(value, null, 2)}
+            </pre>
+          </div>
+        ))
+      )}
     </div>
   );
 }

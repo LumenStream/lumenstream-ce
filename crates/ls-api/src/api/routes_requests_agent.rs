@@ -1,5 +1,6 @@
 #[derive(Debug, Deserialize, Default)]
 struct AgentCreateRequest {
+    #[serde(default)]
     request_type: String,
     #[serde(default)]
     source: String,
@@ -75,7 +76,11 @@ async fn create_my_agent_request(
         .create_agent_request(
             user_id,
             AgentRequestCreateInput {
-                request_type: payload.request_type,
+                request_type: if payload.request_type.trim().is_empty() {
+                    "intake".to_string()
+                } else {
+                    payload.request_type
+                },
                 source: payload.source,
                 title: payload.title,
                 content: payload.content,
