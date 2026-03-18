@@ -1326,7 +1326,7 @@ let settings: WebAppSettings = {
       subscribe_fallback_enabled: true,
       filter: {
         min_seeders: 5,
-        max_movie_size_gb: 30,
+        max_movie_size_gb: 35,
         max_episode_size_gb: 5,
         preferred_resource_pix: ["2160P", "4K", "1080P"],
         preferred_video_encode: ["X265", "H265", "X264"],

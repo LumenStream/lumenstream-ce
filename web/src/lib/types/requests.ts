@@ -1,6 +1,7 @@
 export type AgentRequestType =
   | "intake"
   | "media_request"
+  | "replace_source"
   | "feedback"
   | "missing_episode"
   | "missing_season";

@@ -44,6 +44,7 @@ import { mapToUserStage } from "@/lib/utils/workflow-display";
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   intake: "智能受理",
   media_request: "求片 / 求剧",
+  replace_source: "换源",
   feedback: "反馈",
   missing_episode: "缺集",
   missing_season: "漏季",

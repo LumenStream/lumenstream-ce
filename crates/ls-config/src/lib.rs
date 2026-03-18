@@ -1549,7 +1549,7 @@ fn default_agent_mp_min_seeders() -> i32 {
 }
 
 fn default_agent_mp_max_movie_size_gb() -> f64 {
-    30.0
+    35.0
 }
 
 fn default_agent_mp_max_episode_size_gb() -> f64 {

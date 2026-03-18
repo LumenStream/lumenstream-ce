@@ -90,7 +90,7 @@ pub struct AgentWorkflowStepState {
 
 pub fn infer_workflow_kind(request_type: &str) -> AgentWorkflowKind {
     match request_type {
-        "media_request" => AgentWorkflowKind::RequestMedia,
+        "media_request" | "replace_source" => AgentWorkflowKind::RequestMedia,
         "missing_episode" => AgentWorkflowKind::MissingEpisodeRepair,
         "missing_season" => AgentWorkflowKind::MissingSeasonRepair,
         "feedback" => AgentWorkflowKind::FeedbackTriage,
@@ -282,6 +282,10 @@ mod tests {
     fn request_type_maps_to_expected_workflow_kind() {
         assert_eq!(
             infer_workflow_kind("media_request"),
+            AgentWorkflowKind::RequestMedia
+        );
+        assert_eq!(
+            infer_workflow_kind("replace_source"),
             AgentWorkflowKind::RequestMedia
         );
         assert_eq!(

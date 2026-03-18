@@ -1229,41 +1229,57 @@ LIMIT 1
         .await?;
 
         if let Some((media_item_id, media_name)) = self.resolve_library_hit(&request).await? {
-            let result = json!({
-                "matched_media_item_id": media_item_id,
-                "matched_media_name": media_name,
-                "reason": "library_hit",
-            });
-            self.update_request_state_with_event(
-                request_id,
-                "success",
-                "completed",
-                "verify",
-                true,
-                &request.admin_note,
-                "媒体已在库内，自动关闭工单",
-                &result,
-                None,
-                Some(Utc::now()),
-                "agent.library_hit",
-                None,
-                Some("system"),
-                "已命中库内媒体，自动完成",
-                result.clone(),
-            )
-            .await?;
-            if let Some(user_id) = request.user_id {
-                let _ = self
-                    .create_notification(
-                        user_id,
-                        "请求已完成",
-                        "系统检测到目标媒体已在库内，可直接观看。",
-                        "agent_request",
-                        json!({ "request_id": request_id, "media_item_id": media_item_id }),
-                    )
-                    .await;
+            if agent_should_bypass_library_hit(&request.request_type) {
+                self.append_agent_request_event(
+                    request_id,
+                    "agent.library_hit_bypassed",
+                    None,
+                    Some("system"),
+                    "已命中库内媒体，但当前请求为换源，继续执行搜索",
+                    json!({
+                        "matched_media_item_id": media_item_id,
+                        "matched_media_name": media_name,
+                        "reason": "replace_source_requested",
+                    }),
+                )
+                .await?;
+            } else {
+                let result = json!({
+                    "matched_media_item_id": media_item_id,
+                    "matched_media_name": media_name,
+                    "reason": "library_hit",
+                });
+                self.update_request_state_with_event(
+                    request_id,
+                    "success",
+                    "completed",
+                    "verify",
+                    true,
+                    &request.admin_note,
+                    "媒体已在库内，自动关闭工单",
+                    &result,
+                    None,
+                    Some(Utc::now()),
+                    "agent.library_hit",
+                    None,
+                    Some("system"),
+                    "已命中库内媒体，自动完成",
+                    result.clone(),
+                )
+                .await?;
+                if let Some(user_id) = request.user_id {
+                    let _ = self
+                        .create_notification(
+                            user_id,
+                            "请求已完成",
+                            "系统检测到目标媒体已在库内，可直接观看。",
+                            "agent_request",
+                            json!({ "request_id": request_id, "media_item_id": media_item_id }),
+                        )
+                        .await;
+                }
+                return Ok(result);
             }
-            return Ok(result);
         }
 
         if matches!(request.request_type.as_str(), "missing_episode" | "missing_season")
@@ -2049,8 +2065,12 @@ fn agent_request_raw_text(request: &AgentRequest) -> String {
 fn agent_request_type_supports_media_search(request_type: &str) -> bool {
     matches!(
         request_type,
-        "media_request" | "missing_episode" | "missing_season"
+        "media_request" | "replace_source" | "missing_episode" | "missing_season"
     )
+}
+
+fn agent_should_bypass_library_hit(request_type: &str) -> bool {
+    request_type == "replace_source"
 }
 
 fn agent_title_needs_normalization(title: &str) -> bool {
@@ -2241,11 +2261,29 @@ fn agent_guess_request_type_from_text(
 
     let missing_keywords = ["缺", "漏", "少", "不全", "missing", "lack"];
     let has_missing_keyword = missing_keywords.iter().any(|keyword| raw_text.contains(keyword));
+    let source_replace_keywords = [
+        "换源",
+        "换个源",
+        "换资源",
+        "换成",
+        "替换源",
+        "资源能换",
+        "不要爱奇艺",
+        "有广告",
+        "广告太多",
+    ];
+    let has_replace_keyword = source_replace_keywords
+        .iter()
+        .any(|keyword| raw_text.contains(keyword));
+    let (preferred_sources, avoid_sources, _) = agent_detect_source_preferences(raw_text);
     if has_missing_keyword && !episode_numbers.is_empty() {
         return "missing_episode".to_string();
     }
     if has_missing_keyword && !season_numbers.is_empty() {
         return "missing_season".to_string();
+    }
+    if has_title && (has_replace_keyword || !preferred_sources.is_empty() || !avoid_sources.is_empty()) {
+        return "replace_source".to_string();
     }
     if has_title {
         return "media_request".to_string();
@@ -3387,6 +3425,25 @@ mod agent_request_tests {
         assert_eq!(plan.action, "download");
         assert_eq!(plan.selected_indices, vec![1]);
     }
+
+    #[test]
+    fn heuristic_intent_marks_replace_source_requests() {
+        let mut request = sample_request();
+        request.request_type = "intake".to_string();
+        request.title = "逐玉的资源能换奈飞的资源么，爱奇艺的有广告。".to_string();
+        request.content = request.title.clone();
+        request.media_type = "unknown".to_string();
+
+        let analysis = agent_heuristic_intent_analysis(&request);
+        assert_eq!(analysis.effective_request_type, "replace_source");
+        assert_eq!(analysis.title, "逐玉");
+    }
+
+    #[test]
+    fn replace_source_request_bypasses_library_hit_auto_close() {
+        assert!(agent_should_bypass_library_hit("replace_source"));
+        assert!(!agent_should_bypass_library_hit("media_request"));
+    }
 }
 
 fn agent_json_i32_list(value: &Value) -> Vec<i32> {
@@ -3410,6 +3467,7 @@ fn normalize_agent_request_type(raw: &str) -> Option<&'static str> {
     match raw.trim() {
         "intake" => Some("intake"),
         "media_request" => Some("media_request"),
+        "replace_source" => Some("replace_source"),
         "feedback" => Some("feedback"),
         "missing_episode" => Some("missing_episode"),
         "missing_season" => Some("missing_season"),

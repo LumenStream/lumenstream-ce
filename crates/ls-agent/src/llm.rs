@@ -80,19 +80,20 @@ Guidelines:
 1. Use request_type=feedback only when the text is clearly not asking the system to process any media title.
 2. If the user wants the system to search, replace source, refresh resource, download, 补档, 补集, 补季, 换源, or otherwise act on a media title, set requires_media_search=true.
 3. If the user mentions a movie, set media_type=movie. If the user mentions a TV show, anime, or series, set media_type=series.
-4. If the request is about missing episodes, use request_type=missing_episode. If it is about missing seasons, use request_type=missing_season. Otherwise use media_request for media-related intents.
-5. Extract the media title as accurately as possible.
-6. Put preferred platforms/providers into preferred_sources, and providers to avoid into avoid_sources.
-7. Put additional preferences like 4K, HDR, subtitles, ad-free, bitrate or quality into constraints.
-8. If the media title or type is unclear, set is_ambiguous=true.
-9. Always call the tool; do not answer in plain text."#;
+4. If the request is specifically asking to replace or avoid a current source/platform, use request_type=replace_source.
+5. If the request is about missing episodes, use request_type=missing_episode. If it is about missing seasons, use request_type=missing_season. Otherwise use media_request for media-related intents.
+6. Extract the media title as accurately as possible.
+7. Put preferred platforms/providers into preferred_sources, and providers to avoid into avoid_sources.
+8. Put additional preferences like 4K, HDR, subtitles, ad-free, bitrate or quality into constraints.
+9. If the media title or type is unclear, set is_ambiguous=true.
+10. Always call the tool; do not answer in plain text."#;
 
         let schema = json!({
             "type": "object",
             "properties": {
                 "request_type": {
                     "type": "string",
-                    "enum": ["media_request", "missing_episode", "missing_season", "feedback"]
+                    "enum": ["media_request", "replace_source", "missing_episode", "missing_season", "feedback"]
                 },
                 "media_type": {
                     "type": "string",

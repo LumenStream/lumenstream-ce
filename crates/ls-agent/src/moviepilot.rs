@@ -805,6 +805,23 @@ mod tests {
     }
 
     #[test]
+    fn filter_search_results_rejects_movies_larger_than_35gb() {
+        let filter = AgentMoviePilotFilterConfig::default();
+        let result = filter_search_results(
+            &[
+                sample_context("too-big", 30, 1, 36.0),
+                sample_context("ok", 20, 1, 34.9),
+            ],
+            "movie",
+            None,
+            Some("2025"),
+            &filter,
+        );
+        assert_eq!(result.filtered.len(), 1);
+        assert_eq!(result.filtered[0].torrent_info.title, "ok");
+    }
+
+    #[test]
     fn moviepilot_response_accepts_null_message() {
         let payload = json!({
             "success": true,
