@@ -14,6 +14,21 @@ pub struct LlmParseResult {
     pub original_text: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmAgentExecutionPlan {
+    pub action: String,
+    #[serde(default)]
+    pub selected_indices: Vec<usize>,
+    #[serde(default)]
+    pub add_subscription: bool,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub subscription_reason: Option<String>,
+    #[serde(default)]
+    pub reject_reason: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmProvider {
     config: AgentLlmConfig,
@@ -42,7 +57,6 @@ impl LlmProvider {
         if !self.is_configured() {
             anyhow::bail!("LLM provider is not configured or disabled");
         }
-
         let system_prompt = "You are an AI assistant specialized in parsing user requests for media downloads.
 Your task is to extract the intended media type, title, season numbers, and episode numbers from the user's natural language request.
 Output the result in strict JSON format.
@@ -63,6 +77,63 @@ Rules:
 4. Extract season and episode numbers if present. If not present, use empty arrays.
 5. If you cannot determine the media_type or title, set is_ambiguous to true.";
 
+        let content = self.complete_json(system_prompt, text).await?;
+
+        let mut parsed: LlmParseResult = serde_json::from_str(&content)?;
+        parsed.original_text = text.to_string();
+
+        Ok(parsed)
+    }
+
+    pub async fn plan_request_execution(
+        &self,
+        context: &Value,
+    ) -> anyhow::Result<LlmAgentExecutionPlan> {
+        if !self.is_configured() {
+            anyhow::bail!("LLM provider is not configured or disabled");
+        }
+
+        let system_prompt = "You are an autonomous media request agent.
+You must decide whether to download torrents, download multiple torrents, add a subscription, reject the request, or send it to manual review.
+Return strict JSON only.
+
+Decision goals:
+1. Prefer torrents with the highest seeders.
+2. Never choose BluRay / Remux / BDMV / ISO disc-style content.
+3. Prefer HDR/HDR10+/HDR and 4K when available.
+4. Avoid Dolby Vision / DoVi content.
+5. For movies, normally choose at most one torrent.
+6. For TV series, you may choose multiple torrents to cover as many episodes as possible.
+7. If the series is still ongoing, or current torrents cannot cover enough released episodes, set add_subscription=true.
+8. If no safe/usable torrent exists but subscription is appropriate, choose subscribe.
+9. If metadata indicates the movie is still in theaters and auto rejection is allowed by context, choose reject.
+10. If the situation is ambiguous or risky, choose manual_review.
+
+JSON schema:
+{
+  \"action\": \"download\" | \"download_and_subscribe\" | \"subscribe\" | \"manual_review\" | \"reject\",
+  \"selected_indices\": [number],
+  \"add_subscription\": boolean,
+  \"reason\": \"string\",
+  \"subscription_reason\": \"string|null\",
+  \"reject_reason\": \"string|null\"
+}";
+
+        let content = self
+            .complete_json(
+                system_prompt,
+                &serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string()),
+            )
+            .await?;
+
+        serde_json::from_str(&content).map_err(Into::into)
+    }
+
+    async fn complete_json(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+    ) -> anyhow::Result<String> {
         let endpoint = format!(
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
@@ -77,7 +148,7 @@ Rules:
                 },
                 {
                     "role": "user",
-                    "content": text
+                    "content": user_content
                 }
             ],
             "response_format": { "type": "json_object" },
@@ -99,17 +170,13 @@ Rules:
         }
 
         let result: Value = response.json().await?;
-        let content = result
+        result
             .get("choices")
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("message"))
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Invalid response format from LLM API"))?;
-
-        let mut parsed: LlmParseResult = serde_json::from_str(content)?;
-        parsed.original_text = text.to_string();
-
-        Ok(parsed)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("Invalid response format from LLM API"))
     }
 }

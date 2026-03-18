@@ -116,6 +116,8 @@ struct AgentResolvedTmdbMetadata {
     kind: &'static str,
     tmdb_id: i64,
     details: Value,
+    release_dates: Option<Value>,
+    watch_providers: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -736,6 +738,22 @@ LIMIT 1
         self.tmdb_get_json_opt(&details_endpoint).await
     }
 
+    async fn tmdb_fetch_movie_release_dates_for_agent(
+        &self,
+        movie_id: i64,
+    ) -> anyhow::Result<Option<Value>> {
+        let endpoint = format!("{TMDB_API_BASE}/movie/{movie_id}/release_dates");
+        self.tmdb_get_json_opt(&endpoint).await
+    }
+
+    async fn tmdb_fetch_movie_watch_providers_for_agent(
+        &self,
+        movie_id: i64,
+    ) -> anyhow::Result<Option<Value>> {
+        let endpoint = format!("{TMDB_API_BASE}/movie/{movie_id}/watch/providers");
+        self.tmdb_get_json_opt(&endpoint).await
+    }
+
     async fn tmdb_search_tv_results(
         &self,
         query_title: &str,
@@ -794,10 +812,22 @@ LIMIT 1
                 self.tmdb_fetch_tv_details(tmdb_id).await?
             };
             if let Some(details) = details {
+                let release_dates = if kind == "movie" {
+                    self.tmdb_fetch_movie_release_dates_for_agent(tmdb_id).await?
+                } else {
+                    None
+                };
+                let watch_providers = if kind == "movie" {
+                    self.tmdb_fetch_movie_watch_providers_for_agent(tmdb_id).await?
+                } else {
+                    None
+                };
                 return Ok(Some(AgentResolvedTmdbMetadata {
                     kind,
                     tmdb_id,
                     details,
+                    release_dates,
+                    watch_providers,
                 }));
             }
         }
@@ -869,11 +899,23 @@ LIMIT 1
         } else {
             self.tmdb_fetch_tv_details(tmdb_id).await?
         };
+        let release_dates = if kind == "movie" {
+            self.tmdb_fetch_movie_release_dates_for_agent(tmdb_id).await?
+        } else {
+            None
+        };
+        let watch_providers = if kind == "movie" {
+            self.tmdb_fetch_movie_watch_providers_for_agent(tmdb_id).await?
+        } else {
+            None
+        };
 
         Ok(details.map(|details| AgentResolvedTmdbMetadata {
             kind,
             tmdb_id,
             details,
+            release_dates,
+            watch_providers,
         }))
     }
 
@@ -1287,132 +1329,158 @@ LIMIT 1
             })),
         });
 
-        if contexts.is_empty() {
-            let last_error = agent_last_search_error(result_payload.get("search_attempts"));
-            let result = json!({
-                "error": last_error.clone().unwrap_or_else(|| "no search results".to_string()),
-                "search_attempts": result_payload.get("search_attempts").cloned().unwrap_or_else(|| json!([])),
-                "resolved_tmdb_id": tmdb_metadata.as_ref().map(|value| value.tmdb_id),
-            });
+        let mut execution_plan = if cfg.llm.enabled {
+            if let Ok(llm) = LlmProvider::new(&cfg.llm) {
+                if llm.is_configured() {
+                    let context_payload =
+                        agent_build_execution_context(&request, tmdb_metadata.as_ref(), &contexts);
+                    match llm.plan_request_execution(&context_payload).await {
+                        Ok(plan) => {
+                            let plan = agent_sanitize_execution_plan(plan, contexts.len());
+                            let _ = self
+                                .append_agent_request_event(
+                                    request_id,
+                                    "agent.llm_planned",
+                                    None,
+                                    Some("system"),
+                                    "Agent 已完成执行决策",
+                                    json!(plan.clone()),
+                                )
+                                .await;
+                            plan
+                        }
+                        Err(err) => {
+                            result_payload["llm_plan_error"] = json!(err.to_string());
+                            agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+                        }
+                    }
+                } else {
+                    agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+                }
+            } else {
+                agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+            }
+        } else {
+            agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+        };
+        execution_plan = agent_sanitize_execution_plan(execution_plan, contexts.len());
+        result_payload["agent_plan"] = json!({
+            "action": execution_plan.action,
+            "selected_indices": execution_plan.selected_indices,
+            "add_subscription": execution_plan.add_subscription,
+            "reason": execution_plan.reason,
+            "subscription_reason": execution_plan.subscription_reason,
+            "reject_reason": execution_plan.reject_reason,
+        });
+
+        if execution_plan.action == "reject" {
+            let reject_reason = execution_plan
+                .reject_reason
+                .clone()
+                .unwrap_or_else(|| execution_plan.reason.clone());
             self.update_request_state_with_event(
                 request_id,
-                USER_STATUS_ACTION_REQUIRED,
-                "review_required",
-                "mp_search",
-                false,
+                "failed",
+                "rejected",
+                "manual_review",
+                true,
                 &request.admin_note,
-                "搜索资源失败，已转人工处理",
-                &result,
-                last_error.as_deref(),
-                None,
-                "agent.moviepilot.search_failed",
+                &execution_plan.reason,
+                &result_payload,
+                Some(&reject_reason),
+                Some(Utc::now()),
+                "agent.auto_rejected",
                 None,
                 Some("system"),
-                "搜索资源失败",
-                result.clone(),
+                "Agent 自动拒绝该请求",
+                result_payload.clone(),
             )
             .await?;
-            return Ok(result);
+            if let Some(user_id) = request.user_id {
+                let _ = self
+                    .create_notification(
+                        user_id,
+                        "请求未通过",
+                        &execution_plan.reason,
+                        "agent_request",
+                        json!({ "request_id": request_id }),
+                    )
+                    .await;
+            }
+            return Ok(result_payload);
         }
 
-        if cfg.moviepilot.search_download_enabled && let Some(best) = best.as_ref() {
-            let download_payload = build_download_payload_with_context(
-                best,
-                Some(agent_build_moviepilot_media_info(
-                    &request,
-                    tmdb_metadata.as_ref(),
-                    best,
-                )),
-            );
-            result_payload["selected_result"] = summarize_moviepilot_result(best);
-            match moviepilot.submit_download(&download_payload).await {
-                Ok(response) => {
-                    result_payload["download"] = json!({
-                        "success": response.success,
-                        "message": response.message,
-                    });
-                    self.update_request_state_with_event(
-                        request_id,
-                        "success",
-                        "completed",
-                        "mp_download",
-                        true,
-                        &request.admin_note,
-                        "已通过 Provider 提交下载",
-                        &result_payload,
-                        None,
-                        Some(Utc::now()),
-                        "agent.moviepilot.download_submitted",
-                        None,
-                        Some("system"),
-                        "已提交下载任务",
-                        result_payload.clone(),
-                    )
-                    .await?;
-                    if let Some(user_id) = request.user_id {
-                        let _ = self
-                            .create_notification(
-                                user_id,
-                                "请求已处理",
-                                "Agent 已为该请求提交下载任务。",
-                                "agent_request",
-                                json!({ "request_id": request_id }),
-                            )
-                            .await;
-                    }
-                    return Ok(result_payload);
-                }
-                Err(err) => {
-                    result_payload["download_error"] = json!(err.to_string());
-                }
+        let mut selected_contexts = execution_plan
+            .selected_indices
+            .iter()
+            .filter_map(|index| contexts.get(*index).cloned().map(|context| (*index, context)))
+            .collect::<Vec<_>>();
+
+        if execution_plan.action == "download"
+            || execution_plan.action == "download_and_subscribe"
+        {
+            if selected_contexts.is_empty() && !contexts.is_empty() && let Some(best) = best.as_ref() {
+                selected_contexts.push((0, best.clone()));
             }
         }
 
-        if cfg.moviepilot.subscribe_fallback_enabled {
+        let mut download_results = Vec::new();
+        let mut download_successes = 0usize;
+        if !selected_contexts.is_empty() && cfg.moviepilot.search_download_enabled {
+            for (index, context) in &selected_contexts {
+                let download_payload = build_download_payload_with_context(
+                    context,
+                    Some(agent_build_moviepilot_media_info(
+                        &request,
+                        tmdb_metadata.as_ref(),
+                        context,
+                    )),
+                );
+                match moviepilot.submit_download(&download_payload).await {
+                    Ok(response) => {
+                        if response.success {
+                            download_successes += 1;
+                        }
+                        download_results.push(json!({
+                            "index": index,
+                            "success": response.success,
+                            "message": response.message,
+                            "result": summarize_moviepilot_result(context),
+                        }));
+                    }
+                    Err(err) => {
+                        download_results.push(json!({
+                            "index": index,
+                            "success": false,
+                            "message": err.to_string(),
+                            "result": summarize_moviepilot_result(context),
+                        }));
+                    }
+                }
+            }
+            result_payload["selected_results"] = json!(download_results);
+        }
+
+        let need_subscription = execution_plan.add_subscription
+            || execution_plan.action == "subscribe"
+            || execution_plan.action == "download_and_subscribe";
+        let mut subscription_success = false;
+        if need_subscription && cfg.moviepilot.subscribe_fallback_enabled {
             let subscription = build_subscription_payload(
                 &request.title,
                 effective_media_type,
                 request.tmdb_id,
                 season,
                 &request.content,
-                best.as_ref(),
+                selected_contexts.first().map(|(_, context)| context).or(best.as_ref()),
             );
             match moviepilot.create_subscription(&subscription).await {
                 Ok(response) => {
+                    subscription_success = response.success;
                     result_payload["subscription"] = json!({
                         "success": response.success,
                         "message": response.message,
                     });
-                    self.update_request_state_with_event(
-                        request_id,
-                        "success",
-                        "completed",
-                        "mp_subscribe",
-                        true,
-                        &request.admin_note,
-                        "已创建订阅，等待后续自动补齐",
-                        &result_payload,
-                        None,
-                        Some(Utc::now()),
-                        "agent.moviepilot.subscription_created",
-                        None,
-                        Some("system"),
-                        "已创建订阅",
-                        result_payload.clone(),
-                    )
-                    .await?;
-                    if let Some(user_id) = request.user_id {
-                        let _ = self
-                            .create_notification(
-                                user_id,
-                                "请求已订阅",
-                                "Agent 已为该请求创建订阅，后续命中资源时会自动处理。",
-                                "agent_request",
-                                json!({ "request_id": request_id }),
-                            )
-                            .await;
-                    }
-                    return Ok(result_payload);
                 }
                 Err(err) => {
                     result_payload["subscription_error"] = json!(err.to_string());
@@ -1420,6 +1488,61 @@ LIMIT 1
             }
         }
 
+        if download_successes > 0 || subscription_success {
+            let event_type = if need_subscription {
+                "agent.moviepilot.subscription_created"
+            } else {
+                "agent.moviepilot.download_submitted"
+            };
+            let stage = if need_subscription { "mp_subscribe" } else { "mp_download" };
+            let summary = if need_subscription && download_successes > 0 {
+                "已提交下载并创建订阅"
+            } else if need_subscription {
+                "已创建订阅"
+            } else {
+                "已提交下载任务"
+            };
+            self.update_request_state_with_event(
+                request_id,
+                "success",
+                "completed",
+                stage,
+                true,
+                &request.admin_note,
+                &execution_plan.reason,
+                &result_payload,
+                None,
+                Some(Utc::now()),
+                event_type,
+                None,
+                Some("system"),
+                summary,
+                result_payload.clone(),
+            )
+            .await?;
+            if let Some(user_id) = request.user_id {
+                let message = if need_subscription && download_successes > 0 {
+                    "Agent 已提交下载任务，并为后续更新创建订阅。"
+                } else if need_subscription {
+                    "Agent 已为该请求创建订阅，后续命中资源时会自动处理。"
+                } else {
+                    "Agent 已为该请求提交下载任务。"
+                };
+                let _ = self
+                    .create_notification(
+                        user_id,
+                        "请求已处理",
+                        message,
+                        "agent_request",
+                        json!({ "request_id": request_id }),
+                    )
+                    .await;
+            }
+            return Ok(result_payload);
+        }
+
+        let review_reason = agent_last_search_error(result_payload.get("search_attempts"))
+            .unwrap_or_else(|| execution_plan.reason.clone());
         self.update_request_state_with_event(
             request_id,
             USER_STATUS_ACTION_REQUIRED,
@@ -1429,7 +1552,7 @@ LIMIT 1
             &request.admin_note,
             "未找到可自动处理的结果，已转人工处理",
             &result_payload,
-            Some("agent fallback to review"),
+            Some(&review_reason),
             None,
             "agent.review_required",
             None,
@@ -2157,6 +2280,288 @@ fn agent_build_moviepilot_media_info(
     media
 }
 
+fn agent_context_candidate_summary(index: usize, context: &MoviePilotContext) -> Value {
+    let meta = context.meta_info.as_ref().or(context.media_info.as_ref());
+    let title_upper = context.torrent_info.title.to_ascii_uppercase();
+    let resource_type = meta.map(|value| value.resource_type.clone()).unwrap_or_default();
+    let video_encode = meta.map(|value| value.video_encode.clone()).unwrap_or_default();
+    let season_episode = meta.map(|value| value.season_episode.clone()).unwrap_or_default();
+    let episode_range = meta
+        .map(|value| {
+            if value.begin_episode > 0 && value.end_episode >= value.begin_episode {
+                format!("{}-{}", value.begin_episode, value.end_episode)
+            } else if value.begin_episode > 0 {
+                value.begin_episode.to_string()
+            } else {
+                String::new()
+            }
+        })
+        .unwrap_or_default();
+    json!({
+        "index": index,
+        "title": context.torrent_info.title,
+        "site_name": context.torrent_info.site_name,
+        "seeders": context.torrent_info.seeders,
+        "size_gb": ((context.torrent_info.size / 1024.0 / 1024.0 / 1024.0) * 1000.0).round() / 1000.0,
+        "labels": context.torrent_info.labels,
+        "resource_pix": meta.map(|value| value.resource_pix.clone()).unwrap_or_default(),
+        "resource_type": resource_type,
+        "video_encode": video_encode,
+        "season_episode": season_episode,
+        "episode_range": episode_range,
+        "year": meta.map(|value| value.year.clone()).unwrap_or_default(),
+        "cn_name": meta.map(|value| value.title.clone()).unwrap_or_default(),
+        "en_name": meta.map(|value| value.en_title.clone()).unwrap_or_default(),
+        "is_disc_like": agent_is_disc_like(&title_upper),
+        "is_dolby_vision": agent_is_dolby_vision(&title_upper),
+        "is_hdr": agent_is_hdr_candidate(meta, &title_upper),
+        "is_4k": agent_is_4k_candidate(meta, &title_upper),
+    })
+}
+
+fn agent_is_disc_like(title_upper: &str) -> bool {
+    ["BLURAY", "BLUE RAY", "REMUX", "BDMV", "ISO"]
+        .iter()
+        .any(|keyword| title_upper.contains(keyword))
+}
+
+fn agent_is_dolby_vision(title_upper: &str) -> bool {
+    ["DOVI", "DOLBY VISION", "DV "]
+        .iter()
+        .any(|keyword| title_upper.contains(keyword))
+}
+
+fn agent_is_hdr_candidate(meta: Option<&MoviePilotMediaInfo>, title_upper: &str) -> bool {
+    meta.map(|value| value.resource_pix.to_ascii_uppercase().contains("HDR"))
+        .unwrap_or(false)
+        || ["HDR10+", "HDR10", " HDR "]
+            .iter()
+            .any(|keyword| title_upper.contains(keyword))
+}
+
+fn agent_is_4k_candidate(meta: Option<&MoviePilotMediaInfo>, title_upper: &str) -> bool {
+    meta.map(|value| {
+        let pix = value.resource_pix.to_ascii_uppercase();
+        pix.contains("2160") || pix.contains("4K")
+    })
+    .unwrap_or(false)
+        || title_upper.contains("2160")
+        || title_upper.contains("4K")
+}
+
+fn agent_tmdb_watch_provider_names(payload: Option<&Value>) -> Vec<String> {
+    let mut names = Vec::new();
+    let Some(results) = payload
+        .and_then(|value| value.get("results"))
+        .and_then(Value::as_object)
+    else {
+        return names;
+    };
+    for region in results.values() {
+        for key in ["flatrate", "rent", "buy"] {
+            for provider in region
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(name) = provider.get("provider_name").and_then(Value::as_str)
+                    && !names.iter().any(|existing| existing == name)
+                {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
+fn agent_movie_earliest_release_date(tmdb: &AgentResolvedTmdbMetadata) -> Option<NaiveDate> {
+    let mut dates = tmdb
+        .release_dates
+        .as_ref()
+        .and_then(|value| value.get("results"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|country| {
+            country
+                .get("release_dates")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.get("release_date").and_then(Value::as_str))
+                .filter_map(|value| value.get(..10))
+                .filter_map(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if dates.is_empty()
+        && let Some(release_date) = tmdb.details.get("release_date").and_then(Value::as_str)
+        && let Some(date) = release_date.get(..10)
+        && let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+    {
+        dates.push(date);
+    }
+    dates.into_iter().min()
+}
+
+fn agent_series_is_ongoing(tmdb: Option<&AgentResolvedTmdbMetadata>) -> bool {
+    let Some(tmdb) = tmdb else {
+        return false;
+    };
+    if tmdb.kind != "tv" {
+        return false;
+    }
+    if tmdb
+        .details
+        .get("next_episode_to_air")
+        .and_then(Value::as_object)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return true;
+    }
+    tmdb.details
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "Returning Series" | "In Production" | "Planned"))
+}
+
+fn agent_default_no_result_plan(
+    request: &AgentRequest,
+    tmdb: Option<&AgentResolvedTmdbMetadata>,
+) -> LlmAgentExecutionPlan {
+    if request.media_type.eq_ignore_ascii_case("movie")
+        && let Some(tmdb) = tmdb
+    {
+        let providers = agent_tmdb_watch_provider_names(tmdb.watch_providers.as_ref());
+        if providers.is_empty()
+            && let Some(release_date) = agent_movie_earliest_release_date(tmdb)
+            && (Utc::now().date_naive() - release_date).num_days() < 90
+        {
+            return LlmAgentExecutionPlan {
+                action: "reject".to_string(),
+                reason: "电影上映未满三个月且 TMDB 未发现播出平台，按在映电影拒绝".to_string(),
+                reject_reason: Some("movie still in theatrical window".to_string()),
+                ..Default::default()
+            };
+        }
+
+        return LlmAgentExecutionPlan {
+            action: "manual_review".to_string(),
+            reason: "电影未搜索到可用资源，但存在播出平台线索或上映期已过，转人工处理".to_string(),
+            ..Default::default()
+        };
+    }
+
+    LlmAgentExecutionPlan {
+        action: "subscribe".to_string(),
+        add_subscription: true,
+        reason: "剧集未搜索到足够资源，自动转为订阅等待后续更新".to_string(),
+        subscription_reason: Some("insufficient series torrents".to_string()),
+        ..Default::default()
+    }
+}
+
+fn agent_fallback_execution_plan(
+    request: &AgentRequest,
+    tmdb: Option<&AgentResolvedTmdbMetadata>,
+    contexts: &[MoviePilotContext],
+) -> LlmAgentExecutionPlan {
+    if contexts.is_empty() {
+        return agent_default_no_result_plan(request, tmdb);
+    }
+
+    let mut ranked = contexts
+        .iter()
+        .enumerate()
+        .collect::<Vec<_>>();
+    ranked.sort_by(|(_, left), (_, right)| {
+        right
+            .torrent_info
+            .seeders
+            .cmp(&left.torrent_info.seeders)
+            .then_with(|| right.torrent_info.size.total_cmp(&left.torrent_info.size))
+    });
+
+    let selected_indices = if request.media_type.eq_ignore_ascii_case("series") {
+        ranked
+            .iter()
+            .take(3)
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>()
+    } else {
+        ranked.first().map(|(index, _)| vec![*index]).unwrap_or_default()
+    };
+    let add_subscription = request.media_type.eq_ignore_ascii_case("series") && agent_series_is_ongoing(tmdb);
+
+    LlmAgentExecutionPlan {
+        action: if add_subscription {
+            "download_and_subscribe".to_string()
+        } else {
+            "download".to_string()
+        },
+        selected_indices,
+        add_subscription,
+        reason: "LLM 不可用，回退到按做种数优先的自动选择".to_string(),
+        subscription_reason: add_subscription.then(|| "series still ongoing".to_string()),
+        ..Default::default()
+    }
+}
+
+fn agent_build_execution_context(
+    request: &AgentRequest,
+    tmdb: Option<&AgentResolvedTmdbMetadata>,
+    contexts: &[MoviePilotContext],
+) -> Value {
+    json!({
+        "request": {
+            "title": request.title,
+            "content": request.content,
+            "media_type": request.media_type,
+            "tmdb_id": request.tmdb_id,
+            "season_numbers": request.season_numbers,
+            "episode_numbers": request.episode_numbers,
+        },
+        "tmdb": tmdb.map(|value| json!({
+            "kind": value.kind,
+            "tmdb_id": value.tmdb_id,
+            "title": agent_tmdb_primary_title(value.kind, &value.details),
+            "year": agent_tmdb_year(&value.details),
+            "status": value.details.get("status").and_then(Value::as_str),
+            "number_of_episodes": value.details.get("number_of_episodes").and_then(Value::as_i64),
+            "number_of_seasons": value.details.get("number_of_seasons").and_then(Value::as_i64),
+            "next_episode_to_air": value.details.get("next_episode_to_air"),
+            "watch_providers": agent_tmdb_watch_provider_names(value.watch_providers.as_ref()),
+            "earliest_release_date": agent_movie_earliest_release_date(value).map(|date| date.to_string()),
+        })),
+        "policy": {
+            "avoid_disc_like": ["BluRay", "Remux", "BDMV", "ISO"],
+            "prefer": ["higher seeders", "HDR/HDR10+", "4K"],
+            "avoid": ["Dolby Vision", "DoVi"],
+            "series_can_select_multiple": true,
+        },
+        "candidates": contexts
+            .iter()
+            .enumerate()
+            .map(|(index, context)| agent_context_candidate_summary(index, context))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn agent_sanitize_execution_plan(
+    mut plan: LlmAgentExecutionPlan,
+    contexts_len: usize,
+) -> LlmAgentExecutionPlan {
+    plan.selected_indices.sort_unstable();
+    plan.selected_indices.dedup();
+    plan.selected_indices.retain(|index| *index < contexts_len);
+    if plan.action == "download_and_subscribe" {
+        plan.add_subscription = true;
+    }
+    plan
+}
+
 fn agent_last_search_error(search_attempts: Option<&Value>) -> Option<String> {
     search_attempts
         .and_then(Value::as_array)
@@ -2220,6 +2625,8 @@ mod agent_request_tests {
                 "name": "星际迷航：星际舰队学院",
                 "original_name": "Star Trek: Starfleet Academy"
             }),
+            release_dates: None,
+            watch_providers: None,
         };
 
         let titles = agent_collect_moviepilot_titles(&request, Some(&tmdb));
@@ -2266,6 +2673,8 @@ mod agent_request_tests {
                 "number_of_episodes": 10,
                 "number_of_seasons": 1
             }),
+            release_dates: None,
+            watch_providers: None,
         };
         let best = MoviePilotContext {
             meta_info: None,
@@ -2291,6 +2700,8 @@ mod agent_request_tests {
                 "name": "南相思",
                 "first_air_date": "2026-01-01"
             }),
+            release_dates: None,
+            watch_providers: None,
         };
 
         let query = agent_build_moviepilot_exact_query(
@@ -2306,6 +2717,60 @@ mod agent_request_tests {
         assert_eq!(query.title.as_deref(), Some("南相思"));
         assert_eq!(query.year.as_deref(), Some("2026"));
         assert_eq!(query.sites, vec![8, 10, 2, 6, 7]);
+    }
+
+    #[test]
+    fn no_result_movie_recent_release_without_watch_provider_is_rejected() {
+        let mut request = sample_request();
+        request.media_type = "movie".to_string();
+        let tmdb = AgentResolvedTmdbMetadata {
+            kind: "movie",
+            tmdb_id: 42,
+            details: json!({
+                "title": "测试电影",
+                "release_date": Utc::now().date_naive().to_string()
+            }),
+            release_dates: Some(json!({
+                "results": [
+                    {
+                        "release_dates": [
+                            { "release_date": format!("{}T00:00:00.000Z", Utc::now().date_naive()) }
+                        ]
+                    }
+                ]
+            })),
+            watch_providers: Some(json!({ "results": {} })),
+        };
+
+        let plan = agent_default_no_result_plan(&request, Some(&tmdb));
+        assert_eq!(plan.action, "reject");
+    }
+
+    #[test]
+    fn no_result_movie_with_watch_provider_goes_manual() {
+        let mut request = sample_request();
+        request.media_type = "movie".to_string();
+        let tmdb = AgentResolvedTmdbMetadata {
+            kind: "movie",
+            tmdb_id: 42,
+            details: json!({
+                "title": "测试电影",
+                "release_date": "2026-01-01"
+            }),
+            release_dates: None,
+            watch_providers: Some(json!({
+                "results": {
+                    "CN": {
+                        "flatrate": [
+                            { "provider_name": "Netflix" }
+                        ]
+                    }
+                }
+            })),
+        };
+
+        let plan = agent_default_no_result_plan(&request, Some(&tmdb));
+        assert_eq!(plan.action, "manual_review");
     }
 }
 
