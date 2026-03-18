@@ -167,7 +167,7 @@ describe("HomeDashboard", () => {
     expect(shelf).not.toBeNull();
     expect(shelf?.className).toContain("overflow-x-auto");
 
-    const libraryLink = container.querySelector("a[href='/app/library/lib-movie']");
+    const libraryLink = shelf?.querySelector("a[href='/app/library/lib-movie']");
     expect(libraryLink).not.toBeNull();
 
     const coverImage = libraryLink?.querySelector("img");

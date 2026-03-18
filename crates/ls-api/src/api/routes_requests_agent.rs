@@ -343,6 +343,13 @@ struct AgentMoviePilotTestRequest {
     config: AgentConfig,
 }
 
+fn merge_agent_secret_placeholders(mut incoming: AgentConfig, current: &AgentConfig) -> AgentConfig {
+    if incoming.moviepilot.password.trim() == "***" {
+        incoming.moviepilot.password = current.moviepilot.password.clone();
+    }
+    incoming
+}
+
 async fn admin_get_agent_settings(
     State(state): State<ApiContext>,
     headers: HeaderMap,
@@ -384,9 +391,7 @@ async fn admin_upsert_agent_settings(
             )
         }
     };
-    if payload.moviepilot.password.trim() == "***" {
-        payload.moviepilot.password = settings.agent.moviepilot.password.clone();
-    }
+    payload = merge_agent_secret_placeholders(payload, &settings.agent);
     settings.agent = payload;
     match state.infra.upsert_web_settings(&settings).await {
         Ok(()) => {
@@ -417,11 +422,21 @@ async fn admin_test_agent_moviepilot(
     State(state): State<ApiContext>,
     headers: HeaderMap,
     uri: Uri,
-    Json(payload): Json<AgentMoviePilotTestRequest>,
+    Json(mut payload): Json<AgentMoviePilotTestRequest>,
 ) -> Response {
     if let Err(resp) = require_super_admin(&state, &headers, &uri).await {
         return resp;
     }
+    let settings = match state.infra.get_web_settings().await {
+        Ok(value) => value,
+        Err(err) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("failed to load current settings: {err}"),
+            )
+        }
+    };
+    payload.config = merge_agent_secret_placeholders(payload.config, &settings.agent);
     match state.infra.test_moviepilot_connection(&payload.config).await {
         Ok(result) => Json(result).into_response(),
         Err(err) => error_response(

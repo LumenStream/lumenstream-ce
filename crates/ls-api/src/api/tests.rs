@@ -78,7 +78,7 @@ mod tests {
         DeleteItemsQuery, ItemAncestorsQuery, RenameVirtualFolderRequest,
         UpdateLibraryOptionsRequest, UpdateMediaPathRequest, library_to_base_item_dto,
         paginate_named_values, resolve_media_path,
-        serve_image_file,
+        serve_image_file, merge_agent_secret_placeholders,
         EmbyCreatePlaylistRequest, EmbyPlaylistItemsQuery, EmbyCreateCollectionQuery, LumenBackendRegisterRequest,
     };
     use actix_web::body::MessageBody;
@@ -87,7 +87,7 @@ mod tests {
         StatusCode,
         header::{self, HeaderValue},
     };
-    use ls_config::{BillingConfig, EpayConfig, SecurityConfig, WebAppConfig};
+    use ls_config::{AgentConfig, BillingConfig, EpayConfig, SecurityConfig, WebAppConfig};
     use ls_domain::{
         jellyfin::{ItemCountsDto, PlaybackProgressDto, PublicSystemInfoDto},
         model::{AdminPlaybackSession, AuthSession, Library, UserRole},
@@ -1256,6 +1256,48 @@ mod tests {
             merged.storage.lumenbackend_stream_signing_key,
             "current-stream-secret"
         );
+    }
+
+    #[test]
+    fn merge_agent_secret_placeholders_keeps_existing_moviepilot_password() {
+        let current = AgentConfig {
+            moviepilot: serde_json::from_value(serde_json::json!({
+                "password": "saved-password"
+            }))
+            .expect("deserialize moviepilot config"),
+            ..AgentConfig::default()
+        };
+        let incoming = AgentConfig {
+            moviepilot: serde_json::from_value(serde_json::json!({
+                "password": "***"
+            }))
+            .expect("deserialize incoming moviepilot config"),
+            ..AgentConfig::default()
+        };
+
+        let merged = merge_agent_secret_placeholders(incoming, &current);
+        assert_eq!(merged.moviepilot.password, "saved-password");
+    }
+
+    #[test]
+    fn merge_agent_secret_placeholders_preserves_new_moviepilot_password() {
+        let current = AgentConfig {
+            moviepilot: serde_json::from_value(serde_json::json!({
+                "password": "saved-password"
+            }))
+            .expect("deserialize moviepilot config"),
+            ..AgentConfig::default()
+        };
+        let incoming = AgentConfig {
+            moviepilot: serde_json::from_value(serde_json::json!({
+                "password": "new-password"
+            }))
+            .expect("deserialize incoming moviepilot config"),
+            ..AgentConfig::default()
+        };
+
+        let merged = merge_agent_secret_placeholders(incoming, &current);
+        assert_eq!(merged.moviepilot.password, "new-password");
     }
 
     #[test]
