@@ -1,0 +1,22 @@
+<svg viewBox="85 65 150 170" width="150" height="170" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <polygon id="shardTop" points="100,80 220,150 180,150 135,124" />
+        <polygon id="shardLeft" points="100,80 100,220 135,176 135,124" />
+        <polygon id="shardBottom" points="100,220 220,150 180,150 135,176" />
+        <mask id="maskTop">
+            <rect x="0" y="0" width="300" height="300" fill="white" />
+            <use href="#shardLeft" stroke="black" stroke-width="26" stroke-linejoin="round" fill="none" />
+        </mask>
+        <mask id="maskLeft">
+            <rect x="0" y="0" width="300" height="300" fill="white" />
+            <use href="#shardBottom" stroke="black" stroke-width="26" stroke-linejoin="round" fill="none" />
+        </mask>
+        <mask id="maskBottom">
+            <rect x="0" y="0" width="300" height="300" fill="white" />
+            <use href="#shardTop" stroke="black" stroke-width="26" stroke-linejoin="round" fill="none" />
+        </mask>
+    </defs>
+    <use href="#shardTop" fill="#0055FF" stroke="#0055FF" stroke-width="14" stroke-linejoin="round" mask="url(#maskTop)" />
+    <use href="#shardLeft" fill="#0055FF" stroke="#0055FF" stroke-width="14" stroke-linejoin="round" mask="url(#maskLeft)" />
+    <use href="#shardBottom" fill="#0055FF" stroke="#0055FF" stroke-width="14" stroke-linejoin="round" mask="url(#maskBottom)" />
+</svg>

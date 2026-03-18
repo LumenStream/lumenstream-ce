@@ -20,22 +20,23 @@
 
 ## 📸 界面预览
 
-> **注：** 以下为界面截图展示位，您可以替换为您实际的运行截图。
-
 <div align="center">
-  <img src="https://via.placeholder.com/800x450?text=Home+Page+Screenshot" alt="首页展示" width="80%">
-  <p><em>▲ 现代化海报墙与首页布局</em></p>
+  <img src="./docs/assets/home-screenshot.webp" alt="LumenStream 首页界面截图" width="92%">
+  <p><em>首页：品牌化落地页、性能卖点与流媒体入口一体呈现。</em></p>
 </div>
 
-<div align="center">
-  <img src="https://via.placeholder.com/800x450?text=Media+Detail+Screenshot" alt="媒体详情页展示" width="80%">
-  <p><em>▲ 沉浸式媒体详情页（横幅背景 + 演职员信息）</em></p>
-</div>
-
-<div align="center">
-  <img src="https://via.placeholder.com/800x450?text=Admin+Dashboard+Screenshot" alt="管理后台展示" width="80%">
-  <p><em>▲ 强大的后台管理与任务中心</em></p>
-</div>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="./docs/assets/details-screenshot.webp" alt="LumenStream 媒体详情页截图">
+      <p align="center"><em>媒体详情页：沉浸式封面、演职员与内容信息集中展示。</em></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="./docs/assets/setting-screenshot.webp" alt="LumenStream 设置页截图">
+      <p align="center"><em>系统设置页：核心配置、服务状态与后台管理能力清晰可见。</em></p>
+    </td>
+  </tr>
+</table>
 
 ## ✨ 核心特性
 
@@ -82,7 +83,7 @@ LS_BOOTSTRAP_ADMIN_PASSWORD=your_secure_password
 获取官方 `docker-compose.fullstack.yml`（或使用以下精简版）：
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   lumenstream:
@@ -146,6 +147,7 @@ docker compose up -d
 如果您希望从源码编译和贡献代码：
 
 ### 依赖要求
+
 - [Rust](https://rustup.rs/) (1.75+)
 - [Node.js](https://nodejs.org/) & [Bun](https://bun.sh/)
 - PostgreSQL
@@ -206,6 +208,7 @@ lumenstream/
 cargo fmt --all
 cargo test --workspace
 ```
+
 请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md) 和 [AGENTS.md](./AGENTS.md) 了解完整的开发与提交规范。
 
 ## 📄 许可证
