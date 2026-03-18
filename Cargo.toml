@@ -28,7 +28,7 @@ regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "rust_decimal"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "rust_decimal"] }
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["full"] }
 tracing = "0.1"
