@@ -30,7 +30,7 @@ services:
       - meili_data:/meili_data
 
   lumenstream:
-    image: ${LS_FULLSTACK_IMAGE:-ghcr.io/sleepstars/lumenstream-fullstack:latest}
+    image: ${LS_FULLSTACK_IMAGE:-ghcr.io/lumenstream/lumenstream-ce-fullstack:latest}
     restart: unless-stopped
     # lumenstream currently expects Meilisearch at 127.0.0.1:7700,
     # so lumenstream shares meilisearch network namespace.

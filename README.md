@@ -3,10 +3,10 @@
   <p>🚀 Rust 实现的高性能、轻量级、Jellyfin 兼容流媒体服务器</p>
 
   <p>
-    <a href="https://github.com/Sleepstars/lumenstream/actions"><img src="https://img.shields.io/github/actions/workflow/status/Sleepstars/lumenstream/ci-ghcr.yml?branch=main&logo=github&style=flat-square" alt="Build Status"></a>
-    <a href="https://hub.docker.com/r/Sleepstars/lumenstream-fullstack"><img src="https://img.shields.io/docker/pulls/Sleepstars/lumenstream-fullstack?logo=docker&style=flat-square" alt="Docker Pulls"></a>
+    <a href="https://github.com/LumenStream/lumenstream-ce/actions"><img src="https://img.shields.io/github/actions/workflow/status/LumenStream/lumenstream-ce/ci-ghcr.yml?branch=main&logo=github&style=flat-square" alt="Build Status"></a>
+    <a href="https://github.com/orgs/LumenStream/packages/container/package/lumenstream-ce-fullstack"><img src="https://img.shields.io/badge/registry-ghcr.io-2ea44f?logo=github&style=flat-square" alt="GHCR"></a>
     <img src="https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust&style=flat-square" alt="Rust Version">
-    <a href="https://github.com/Sleepstars/lumenstream/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Sleepstars/lumenstream?style=flat-square" alt="License"></a>
+    <a href="https://github.com/LumenStream/lumenstream-ce/blob/main/LICENSE"><img src="https://img.shields.io/github/license/LumenStream/lumenstream-ce?style=flat-square" alt="License"></a>
   </p>
 </div>
 
@@ -55,7 +55,7 @@
 
 ## 🚀 快速部署
 
-LumenStream 推荐使用 Docker 进行一键部署，自带前后端一体镜像。
+LumenStream CE 推荐使用 Docker 进行一键部署，自带前后端一体镜像。默认镜像由 GitHub Actions 构建并发布到 GHCR（`ghcr.io/lumenstream/lumenstream-ce-fullstack`）。
 
 ### 环境准备
 
@@ -86,7 +86,7 @@ version: '3.8'
 
 services:
   lumenstream:
-    image: ghcr.io/Sleepstars/lumenstream-fullstack:latest
+    image: ghcr.io/lumenstream/lumenstream-ce-fullstack:latest
     container_name: lumenstream
     network_mode: service:meilisearch # 共享网络以连接搜索引擎
     ports:

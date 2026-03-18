@@ -1,4 +1,4 @@
-name: rust-ci-ghcr
+name: ci-ghcr
 
 on:
   pull_request:
@@ -12,29 +12,45 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ci-ghcr-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-deploy:
-    name: Build & Deploy
-    runs-on: [self-hosted, linux, x64]
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.2
+
+      - name: Install web dependencies
+        working-directory: ./web
+        run: bun install --frozen-lockfile
+
       - name: Rust format check
-        run: |
-          . /home/github-runner/.cargo/env
-          cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
 
       - name: Rust tests
-        run: |
-          . /home/github-runner/.cargo/env
-          cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Script syntax check
         run: |
-          . /home/github-runner/.cargo/env
           if [ -f ../scripts/contract_test_api.sh ] && [ -f ../scripts/replay_client_callchains.sh ]; then
             bash -n \
               ../scripts/contract_test_api.sh \
@@ -49,28 +65,88 @@ jobs:
               docker/write-web-runtime-config.sh
           else
             echo "skip part of script syntax check: ../scripts/*.sh not found in this checkout"
-            bash -n docker/fullstack-entrypoint.sh docker/web-entrypoint.sh docker/write-web-runtime-config.sh
+            bash -n \
+              scripts/repo_split_common.sh \
+              scripts/export_ce_upstream.sh \
+              scripts/init_commercial_downstream.sh \
+              scripts/cut_split_repositories.sh \
+              scripts/sync_from_ce_upstream.sh \
+              docker/fullstack-entrypoint.sh \
+              docker/web-entrypoint.sh \
+              docker/write-web-runtime-config.sh
           fi
+
+      - name: Frontend type check
+        working-directory: ./web
+        run: bun run check
+
+      - name: Frontend tests
+        working-directory: ./web
+        run: bun run test
+
+      - name: Frontend lint
+        working-directory: ./web
+        run: bun run lint
+
+      - name: Frontend format check
+        working-directory: ./web
+        run: bun run format:check
+
+  publish-ghcr:
+    name: Build & Publish GHCR image
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set image repository
+        id: image
+        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}-fullstack" >> "$GITHUB_OUTPUT"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
 
       - name: Build release binary
         run: |
-          . /home/github-runner/.cargo/env
-          cargo build --release -p ls-app && strip target/release/ls-app
+          cargo build --release --locked -p ls-app
+          strip target/release/ls-app
 
-      - name: Build local image
-        if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        run: |
-          docker build -t lumenstream-fullstack:local -f ./Dockerfile.fullstack .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Deploy via Docker Compose
-        if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        run: |
-          # 确保环境变量被传递给 docker compose
-          export LS_FULLSTACK_IMAGE=lumenstream-fullstack:local
-          
-          # 进入 compose 目录并启动
-          cd /opt/services/lumenstream
-          docker compose up -d lumenstream
-          
-          # 可选：清理悬空的旧镜像以释放空间
-          docker image prune -f
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push fullstack image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.fullstack
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
