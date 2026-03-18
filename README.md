@@ -210,4 +210,8 @@ cargo test --workspace
 
 ## 📄 许可证
 
-本项目遵循相应的开源许可证，详情请参阅 [LICENSE](LICENSE) 文件。
+本项目采用 [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)（AGPL-3.0）授权，完整条款请参阅仓库根目录中的 [LICENSE](LICENSE) 文件。
+
+### 商业授权说明
+
+如您计划将本项目用于商业二次开发、闭源分发，或其他不希望受 AGPL-3.0 条款约束的场景，请联系 `admin@sleepstars.net` 购买商业授权。
