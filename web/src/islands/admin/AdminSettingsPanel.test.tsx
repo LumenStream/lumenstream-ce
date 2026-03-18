@@ -59,15 +59,10 @@ const sampleSettings = {
     enabled: false,
     default_strategy: "primary_with_fallback",
     providers: ["tmdb", "tvdb", "bangumi"],
-    scenario_defaults: {
-      movie_metadata: ["tmdb", "tvdb"],
-      series_metadata: ["tmdb", "tvdb"],
-      season_metadata: ["tmdb", "tvdb"],
-      episode_metadata: ["tmdb", "tvdb"],
-      person_metadata: ["tmdb", "tvdb"],
-      image_fetch: ["tmdb", "tvdb"],
-      search_by_title: ["tmdb", "tvdb"],
-      search_by_external_id: ["tmdb", "tvdb"],
+    default_routes: {
+      movie: ["tmdb", "tvdb"],
+      series: ["tmdb", "tvdb"],
+      image: ["tmdb", "tvdb"],
     },
     tvdb: {
       enabled: true,

@@ -42,12 +42,13 @@ import {
   listScraperProviders,
 } from "@/lib/api/admin";
 import {
-  SCRAPER_SCENARIO_KEYS,
-  extractLibraryScenarioInputs,
+  SCRAPER_LIBRARY_ROUTE_KEYS,
+  extractLibraryRouteInputs,
   formatLibraryPolicyInput,
+  getScraperLibraryRouteLabel,
   normalizeLibraryPolicyInput,
   parseLibraryPolicyInput,
-  updateLibraryPolicyScenarioInput,
+  updateLibraryPolicyRouteInput,
 } from "@/lib/admin/scraper-policy";
 import { buildItemImageUrl } from "@/lib/api/items";
 import type { ApiError } from "@/lib/api/client";
@@ -335,7 +336,7 @@ export function AdminLibrariesPanel() {
     const policyDraft =
       libraryPolicyDrafts[item.id] ?? formatLibraryPolicyInput(item.scraper_policy);
     const parsedPolicy = parseLibraryPolicyInput(policyDraft);
-    const quickScenarioInputs = extractLibraryScenarioInputs(parsedPolicy);
+    const quickRouteInputs = extractLibraryRouteInputs(parsedPolicy);
     const policyDirty =
       normalizeLibraryPolicyInput(policyDraft) !==
       normalizeLibraryPolicyInput(formatLibraryPolicyInput(item.scraper_policy));
@@ -587,13 +588,13 @@ export function AdminLibrariesPanel() {
                       <Settings2 className="h-4 w-4" /> 刮削链路策略
                     </h3>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      通过拖拽调整优先级，配置当前媒体库在不同场景下的刮削器回退链路。
+                      通过拖拽调整优先级，分别配置当前媒体库的电影、电视剧与图像链路。
                     </p>
                   </div>
 
                   <div className="grid gap-6 xl:grid-cols-2">
-                    {SCRAPER_SCENARIO_KEYS.map((scenarioKey) => {
-                      const currentChainRaw = quickScenarioInputs[scenarioKey] ?? "";
+                    {SCRAPER_LIBRARY_ROUTE_KEYS.map((routeKey) => {
+                      const currentChainRaw = quickRouteInputs[routeKey] ?? "";
                       const currentChain = currentChainRaw
                         .split(",")
                         .map((s) => s.trim())
@@ -601,10 +602,10 @@ export function AdminLibrariesPanel() {
 
                       return (
                         <div
-                          key={`${item.id}-${scenarioKey}`}
+                          key={`${item.id}-${routeKey}`}
                           className="bg-card/50 rounded-xl border p-4 shadow-sm"
                         >
-                          <Field label={`${scenarioKey}`}>
+                          <Field label={getScraperLibraryRouteLabel(routeKey)}>
                             <SortableProviderList
                               providers={scraperProviders.map((p) => ({
                                 id: p.provider_id,
@@ -616,9 +617,9 @@ export function AdminLibrariesPanel() {
                               onChange={(activeIds) => {
                                 setLibraryPolicyDrafts((current) => ({
                                   ...current,
-                                  [item.id]: updateLibraryPolicyScenarioInput(
+                                  [item.id]: updateLibraryPolicyRouteInput(
                                     current[item.id] ?? "{}",
-                                    scenarioKey,
+                                    routeKey,
                                     activeIds.join(", ")
                                   ),
                                 }));

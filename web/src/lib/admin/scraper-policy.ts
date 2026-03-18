@@ -1,16 +1,21 @@
-export const SCRAPER_SCENARIO_KEYS = [
-  "movie_metadata",
-  "series_metadata",
-  "season_metadata",
-  "episode_metadata",
-  "person_metadata",
-  "image_fetch",
-  "search_by_title",
-  "search_by_external_id",
-] as const;
+export const SCRAPER_DEFAULT_ROUTE_KEYS = ["movie", "series", "image"] as const;
+export const SCRAPER_LIBRARY_ROUTE_KEYS = ["movie", "series", "image"] as const;
 
-export type ScraperScenarioKey = (typeof SCRAPER_SCENARIO_KEYS)[number];
+export type ScraperDefaultRouteKey = (typeof SCRAPER_DEFAULT_ROUTE_KEYS)[number];
+export type ScraperLibraryRouteKey = (typeof SCRAPER_LIBRARY_ROUTE_KEYS)[number];
 export type LibraryPolicyObject = Record<string, unknown>;
+
+const DEFAULT_ROUTE_LABELS: Record<ScraperDefaultRouteKey, string> = {
+  movie: "电影",
+  series: "电视剧",
+  image: "图像",
+};
+
+const LIBRARY_ROUTE_LABELS: Record<ScraperLibraryRouteKey, string> = {
+  movie: "电影",
+  series: "电视剧",
+  image: "图像获取",
+};
 
 export function parseProviderChainInput(value: string): string[] {
   return value
@@ -28,45 +33,35 @@ export function parseLibraryPolicyInput(value: string): LibraryPolicyObject | nu
   }
 }
 
-export function extractLibraryScenarioInputs(
+export function extractLibraryRouteInputs(
   policy: LibraryPolicyObject | null
-): Record<string, string> {
-  const scenarioDefaults = isRecord(policy?.scenario_defaults) ? policy.scenario_defaults : {};
-  const next: Record<string, string> = {};
-  SCRAPER_SCENARIO_KEYS.forEach((scenarioKey) => {
-    const chain = Array.isArray(scenarioDefaults[scenarioKey])
-      ? scenarioDefaults[scenarioKey]
+): Record<ScraperLibraryRouteKey, string> {
+  const next = {} as Record<ScraperLibraryRouteKey, string>;
+  SCRAPER_LIBRARY_ROUTE_KEYS.forEach((routeKey) => {
+    const chain = Array.isArray(policy?.[routeKey])
+      ? policy[routeKey]
           .filter((value): value is string => typeof value === "string")
           .map((value) => value.trim())
           .filter(Boolean)
       : [];
-    next[scenarioKey] = chain.join(", ");
+    next[routeKey] = chain.join(", ");
   });
   return next;
 }
 
-export function updateLibraryPolicyScenarioInput(
+export function updateLibraryPolicyRouteInput(
   rawPolicyInput: string,
-  scenarioKey: ScraperScenarioKey,
+  routeKey: ScraperLibraryRouteKey,
   nextChainInput: string
 ): string {
   const basePolicy = parseLibraryPolicyInput(rawPolicyInput) ?? {};
   const nextPolicy: LibraryPolicyObject = { ...basePolicy };
-  const scenarioDefaults = isRecord(nextPolicy.scenario_defaults)
-    ? { ...nextPolicy.scenario_defaults }
-    : {};
   const chain = parseProviderChainInput(nextChainInput);
 
   if (chain.length > 0) {
-    scenarioDefaults[scenarioKey] = chain;
+    nextPolicy[routeKey] = chain;
   } else {
-    delete scenarioDefaults[scenarioKey];
-  }
-
-  if (Object.keys(scenarioDefaults).length > 0) {
-    nextPolicy.scenario_defaults = scenarioDefaults;
-  } else {
-    delete nextPolicy.scenario_defaults;
+    delete nextPolicy[routeKey];
   }
 
   return JSON.stringify(nextPolicy, null, 2);
@@ -79,6 +74,14 @@ export function formatLibraryPolicyInput(policy: Record<string, unknown> | undef
 export function normalizeLibraryPolicyInput(value: string): string {
   const parsed = parseLibraryPolicyInput(value);
   return parsed ? JSON.stringify(parsed) : value.trim();
+}
+
+export function getScraperDefaultRouteLabel(routeKey: ScraperDefaultRouteKey): string {
+  return DEFAULT_ROUTE_LABELS[routeKey];
+}
+
+export function getScraperLibraryRouteLabel(routeKey: ScraperLibraryRouteKey): string {
+  return LIBRARY_ROUTE_LABELS[routeKey];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

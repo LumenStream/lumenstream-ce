@@ -129,15 +129,10 @@ describe("AdminScraperPanel", () => {
           enabled: true,
           default_strategy: "primary_with_fallback",
           providers: ["tmdb", "tvdb", "bangumi"],
-          scenario_defaults: {
-            movie_metadata: ["tmdb", "tvdb"],
-            series_metadata: ["tmdb", "tvdb"],
-            season_metadata: ["tmdb", "tvdb"],
-            episode_metadata: ["tmdb", "tvdb"],
-            person_metadata: ["tmdb", "tvdb"],
-            image_fetch: ["tmdb", "tvdb"],
-            search_by_title: ["tmdb", "tvdb"],
-            search_by_external_id: ["tmdb", "tvdb"],
+          default_routes: {
+            movie: ["tmdb", "tvdb"],
+            series: ["tmdb", "tvdb"],
+            image: ["tmdb", "tvdb"],
           },
           tvdb: {
             enabled: true,
@@ -211,10 +206,9 @@ describe("AdminScraperPanel", () => {
           library_type: "Series",
           enabled: true,
           scraper_policy: {
-            scenario_defaults: {
-              series_metadata: ["bangumi", "tvdb", "tmdb"],
-              episode_metadata: ["bangumi", "tvdb", "tmdb"],
-            },
+            movie: ["tmdb", "tvdb"],
+            series: ["bangumi", "tvdb", "tmdb"],
+            image: ["bangumi", "tvdb", "tmdb"],
           },
           created_at: "2026-03-12T00:00:00Z",
         },
@@ -298,5 +292,8 @@ describe("AdminScraperPanel", () => {
     expect(container.textContent).toContain("总缓存条目");
     expect(container.textContent).toContain("管理媒体库");
     expect(container.textContent).toContain("媒体库级别的刮削配置已迁移到媒体库管理页面");
+    expect(container.textContent).toContain("电影");
+    expect(container.textContent).toContain("电视剧");
+    expect(container.textContent).toContain("图像");
   });
 });

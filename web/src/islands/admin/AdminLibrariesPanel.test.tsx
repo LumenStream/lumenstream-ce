@@ -6,10 +6,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  parseLibraryPolicyInput,
-  updateLibraryPolicyScenarioInput,
-} from "@/lib/admin/scraper-policy";
+import { parseLibraryPolicyInput, updateLibraryPolicyRouteInput } from "@/lib/admin/scraper-policy";
 
 import { AdminLibrariesPanel } from "./AdminLibrariesPanel";
 
@@ -94,11 +91,9 @@ describe("AdminLibrariesPanel", () => {
           library_type: "Series",
           enabled: true,
           scraper_policy: {
-            scenario_defaults: {
-              series_metadata: ["bangumi", "tvdb", "tmdb"],
-              episode_metadata: ["bangumi", "tvdb", "tmdb"],
-              image_fetch: ["bangumi", "tvdb", "tmdb"],
-            },
+            movie: ["tmdb", "tvdb"],
+            series: ["bangumi", "tvdb", "tmdb"],
+            image: ["bangumi", "tvdb", "tmdb"],
           },
           item_count: 24,
           last_item_updated_at: "2026-03-14T11:00:00Z",
@@ -130,11 +125,9 @@ describe("AdminLibrariesPanel", () => {
         library_type: "Series",
         enabled: true,
         scraper_policy: {
-          scenario_defaults: {
-            series_metadata: ["bangumi", "tvdb", "tmdb"],
-            episode_metadata: ["bangumi", "tvdb", "tmdb"],
-            image_fetch: ["bangumi", "tvdb", "tmdb"],
-          },
+          movie: ["tmdb", "tvdb"],
+          series: ["bangumi", "tvdb", "tmdb"],
+          image: ["bangumi", "tvdb", "tmdb"],
         },
       },
     ]);
@@ -175,26 +168,24 @@ describe("AdminLibrariesPanel", () => {
   });
 
   it("updates scraper policy chains with shared helper", () => {
-    const nextPolicy = updateLibraryPolicyScenarioInput(
+    const nextPolicy = updateLibraryPolicyRouteInput(
       JSON.stringify(
         {
-          scenario_defaults: {
-            series_metadata: ["bangumi", "tvdb", "tmdb"],
-            episode_metadata: ["bangumi", "tvdb", "tmdb"],
-          },
+          movie: ["tmdb", "tvdb"],
+          series: ["bangumi", "tvdb", "tmdb"],
+          image: ["bangumi", "tvdb", "tmdb"],
         },
         null,
         2
       ),
-      "series_metadata",
+      "series",
       "tvdb, tmdb"
     );
 
     expect(parseLibraryPolicyInput(nextPolicy)).toEqual({
-      scenario_defaults: {
-        series_metadata: ["tvdb", "tmdb"],
-        episode_metadata: ["bangumi", "tvdb", "tmdb"],
-      },
+      movie: ["tmdb", "tvdb"],
+      series: ["tvdb", "tmdb"],
+      image: ["bangumi", "tvdb", "tmdb"],
     });
   });
 });

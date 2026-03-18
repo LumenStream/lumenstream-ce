@@ -158,13 +158,27 @@ pub struct ScraperPolicySettings {
     #[serde(default = "default_strategy")]
     pub default_strategy: String,
     #[serde(default)]
-    pub scenario_defaults: BTreeMap<String, Vec<String>>,
+    pub default_routes: ScraperDefaultRoutes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ScraperDefaultRoutes {
+    #[serde(default)]
+    pub movie: Vec<String>,
+    #[serde(default)]
+    pub series: Vec<String>,
+    #[serde(default)]
+    pub image: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ScraperLibraryPolicy {
     #[serde(default)]
-    pub scenario_defaults: BTreeMap<String, Vec<String>>,
+    pub movie: Vec<String>,
+    #[serde(default)]
+    pub series: Vec<String>,
+    #[serde(default)]
+    pub image: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -175,6 +189,13 @@ pub struct ScrapePlan {
     pub strategy: String,
     #[serde(default)]
     pub source: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ScraperRoutePurpose {
+    Metadata,
+    Image,
 }
 
 pub fn infer_scenario_from_item_type(item_type: &str) -> ScraperScenario {
@@ -207,18 +228,26 @@ pub fn resolve_provider_chain(
     settings: &ScraperPolicySettings,
     library_policy: Option<&ScraperLibraryPolicy>,
     scenario: ScraperScenario,
+    purpose: ScraperRoutePurpose,
     available: &[String],
 ) -> ScrapePlan {
     let scenario_key = scenario.as_str().to_string();
     let library_chain = library_policy
-        .and_then(|policy| policy.scenario_defaults.get(&scenario_key))
-        .cloned()
+        .map(|policy| match purpose {
+            ScraperRoutePurpose::Metadata => match scenario {
+                ScraperScenario::MovieMetadata => policy.movie.clone(),
+                _ => policy.series.clone(),
+            },
+            ScraperRoutePurpose::Image => policy.image.clone(),
+        })
         .unwrap_or_default();
-    let default_chain = settings
-        .scenario_defaults
-        .get(&scenario_key)
-        .cloned()
-        .unwrap_or_default();
+    let default_chain = match purpose {
+        ScraperRoutePurpose::Image => settings.default_routes.image.clone(),
+        ScraperRoutePurpose::Metadata => match scenario {
+            ScraperScenario::MovieMetadata => settings.default_routes.movie.clone(),
+            _ => settings.default_routes.series.clone(),
+        },
+    };
 
     let available_chain = normalize_provider_chain(available);
     let requested = if library_chain.is_empty() {
@@ -249,11 +278,10 @@ fn default_strategy() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::{
-        ScrapeExternalIds, ScraperLibraryPolicy, ScraperPolicySettings, ScraperScenario,
-        infer_scenario_from_item_type, normalize_provider_chain, resolve_provider_chain,
+        ScrapeExternalIds, ScraperDefaultRoutes, ScraperLibraryPolicy, ScraperPolicySettings,
+        ScraperRoutePurpose, ScraperScenario, infer_scenario_from_item_type,
+        normalize_provider_chain, resolve_provider_chain,
     };
 
     #[test]
@@ -287,28 +315,25 @@ mod tests {
 
     #[test]
     fn resolve_provider_chain_prefers_library_override() {
-        let mut scenario_defaults = BTreeMap::new();
-        scenario_defaults.insert(
-            "movie_metadata".to_string(),
-            vec!["tmdb".to_string(), "tvdb".to_string()],
-        );
         let settings = ScraperPolicySettings {
             default_strategy: "primary_with_fallback".to_string(),
-            scenario_defaults,
+            default_routes: ScraperDefaultRoutes {
+                movie: vec!["tmdb".to_string(), "tvdb".to_string()],
+                series: vec!["tvdb".to_string(), "tmdb".to_string()],
+                image: vec!["fanart".to_string(), "tmdb".to_string()],
+            },
         };
-        let mut library_defaults = BTreeMap::new();
-        library_defaults.insert(
-            "movie_metadata".to_string(),
-            vec!["fanart".to_string(), "tmdb".to_string()],
-        );
         let library_policy = ScraperLibraryPolicy {
-            scenario_defaults: library_defaults,
+            movie: vec!["fanart".to_string(), "tmdb".to_string()],
+            series: Vec::new(),
+            image: Vec::new(),
         };
 
         let plan = resolve_provider_chain(
             &settings,
             Some(&library_policy),
             ScraperScenario::MovieMetadata,
+            ScraperRoutePurpose::Metadata,
             &["tmdb".to_string(), "fanart".to_string()],
         );
         assert_eq!(
@@ -325,31 +350,24 @@ mod tests {
     }
 
     #[test]
-    fn library_override_can_explicitly_enable_bangumi() {
-        let mut scenario_defaults = BTreeMap::new();
-        scenario_defaults.insert(
-            "series_metadata".to_string(),
-            vec!["tmdb".to_string(), "tvdb".to_string()],
-        );
+    fn metadata_routes_use_series_default_for_non_movie_scenarios() {
         let settings = ScraperPolicySettings {
             default_strategy: "primary_with_fallback".to_string(),
-            scenario_defaults,
+            default_routes: ScraperDefaultRoutes {
+                movie: vec!["tmdb".to_string(), "tvdb".to_string()],
+                series: vec![
+                    "bangumi".to_string(),
+                    "tvdb".to_string(),
+                    "tmdb".to_string(),
+                ],
+                image: vec!["tmdb".to_string(), "fanart".to_string()],
+            },
         };
-        let mut library_defaults = BTreeMap::new();
-        library_defaults.insert(
-            "series_metadata".to_string(),
-            vec![
-                "bangumi".to_string(),
-                "tvdb".to_string(),
-                "tmdb".to_string(),
-            ],
-        );
         let plan = resolve_provider_chain(
             &settings,
-            Some(&ScraperLibraryPolicy {
-                scenario_defaults: library_defaults,
-            }),
-            ScraperScenario::SeriesMetadata,
+            None,
+            ScraperScenario::SearchByTitle,
+            ScraperRoutePurpose::Metadata,
             &[
                 "tmdb".to_string(),
                 "tvdb".to_string(),
@@ -364,5 +382,57 @@ mod tests {
                 "tmdb".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn image_routes_prefer_library_image_override() {
+        let settings = ScraperPolicySettings {
+            default_strategy: "primary_with_fallback".to_string(),
+            default_routes: ScraperDefaultRoutes {
+                movie: vec!["tmdb".to_string(), "tvdb".to_string()],
+                series: vec!["tvdb".to_string(), "tmdb".to_string()],
+                image: vec!["tmdb".to_string(), "fanart".to_string()],
+            },
+        };
+        let plan = resolve_provider_chain(
+            &settings,
+            Some(&ScraperLibraryPolicy {
+                movie: vec!["tmdb".to_string()],
+                series: vec!["bangumi".to_string(), "tvdb".to_string()],
+                image: vec!["tvdb".to_string(), "tmdb".to_string()],
+            }),
+            ScraperScenario::ImageFetch,
+            ScraperRoutePurpose::Image,
+            &["tmdb".to_string(), "tvdb".to_string()],
+        );
+        assert_eq!(
+            plan.provider_chain,
+            vec!["tvdb".to_string(), "tmdb".to_string()]
+        );
+        assert_eq!(plan.source, "library_override");
+    }
+
+    #[test]
+    fn image_routes_fall_back_to_global_image_chain() {
+        let settings = ScraperPolicySettings {
+            default_strategy: "primary_with_fallback".to_string(),
+            default_routes: ScraperDefaultRoutes {
+                movie: vec!["tmdb".to_string()],
+                series: vec!["bangumi".to_string(), "tvdb".to_string()],
+                image: vec!["fanart".to_string(), "tmdb".to_string()],
+            },
+        };
+        let plan = resolve_provider_chain(
+            &settings,
+            None,
+            ScraperScenario::ImageFetch,
+            ScraperRoutePurpose::Image,
+            &["tmdb".to_string(), "fanart".to_string()],
+        );
+        assert_eq!(
+            plan.provider_chain,
+            vec!["fanart".to_string(), "tmdb".to_string()]
+        );
+        assert_eq!(plan.source, "global_default");
     }
 }

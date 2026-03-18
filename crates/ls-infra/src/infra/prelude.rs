@@ -27,8 +27,8 @@ use ls_config::{AppConfig, AuthConfig, WebAppConfig};
 use ls_scraper::{
     BangumiClient, BangumiScraperProvider, ImageAssetPatch, ScrapePlan, ScrapeResult,
     ScraperLibraryPolicy, ScraperPolicySettings, ScraperProviderDescriptor,
-    ScraperProviderStatus, ScraperScenario, TmdbScraperProvider, TvdbClient,
-    TvdbScraperProvider, infer_scenario_from_item_type, resolve_provider_chain,
+    ScraperProviderStatus, ScraperRoutePurpose, ScraperScenario, TmdbScraperProvider,
+    TvdbClient, TvdbScraperProvider, infer_scenario_from_item_type, resolve_provider_chain,
 };
 use ls_domain::jellyfin::{
     AuthenticationResultDto, BaseItemDto, ChapterInfoDto, ItemCountsDto, MediaSourceInfoDto,

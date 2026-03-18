@@ -323,7 +323,11 @@ export interface ScraperConfig {
   enabled: boolean;
   default_strategy: string;
   providers: string[];
-  scenario_defaults: Record<string, string[]>;
+  default_routes: {
+    movie: string[];
+    series: string[];
+    image: string[];
+  };
   tvdb: {
     enabled: boolean;
     base_url: string;

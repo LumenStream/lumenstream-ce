@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    env, fs,
-    path::Path,
-};
+use std::{collections::HashSet, env, fs, path::Path};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -324,8 +320,8 @@ pub struct ScraperConfig {
     pub default_strategy: String,
     #[serde(default = "default_scraper_providers")]
     pub providers: Vec<String>,
-    #[serde(default = "default_scraper_scenario_defaults")]
-    pub scenario_defaults: BTreeMap<String, Vec<String>>,
+    #[serde(default = "default_scraper_default_routes")]
+    pub default_routes: ScraperDefaultRoutes,
     #[serde(default)]
     pub tvdb: ScraperTvdbConfig,
     #[serde(default)]
@@ -338,10 +334,26 @@ impl Default for ScraperConfig {
             enabled: false,
             default_strategy: default_scraper_default_strategy(),
             providers: default_scraper_providers(),
-            scenario_defaults: default_scraper_scenario_defaults(),
+            default_routes: default_scraper_default_routes(),
             tvdb: ScraperTvdbConfig::default(),
             bangumi: ScraperBangumiConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScraperDefaultRoutes {
+    #[serde(default)]
+    pub movie: Vec<String>,
+    #[serde(default)]
+    pub series: Vec<String>,
+    #[serde(default)]
+    pub image: Vec<String>,
+}
+
+impl Default for ScraperDefaultRoutes {
+    fn default() -> Self {
+        default_scraper_default_routes()
     }
 }
 
@@ -1355,8 +1367,14 @@ impl AppConfig {
         if scraper.providers.is_empty() {
             scraper.providers = default_scraper_providers();
         }
-        if scraper.scenario_defaults.is_empty() {
-            scraper.scenario_defaults = default_scraper_scenario_defaults();
+        if scraper.default_routes.movie.is_empty() {
+            scraper.default_routes.movie = default_scraper_default_routes().movie;
+        }
+        if scraper.default_routes.series.is_empty() {
+            scraper.default_routes.series = default_scraper_default_routes().series;
+        }
+        if scraper.default_routes.image.is_empty() {
+            scraper.default_routes.image = default_scraper_default_routes().image;
         }
         if scraper.default_strategy.trim().is_empty() {
             scraper.default_strategy = default_scraper_default_strategy();
@@ -1582,24 +1600,12 @@ fn default_scraper_providers() -> Vec<String> {
     ]
 }
 
-fn default_scraper_scenario_defaults() -> BTreeMap<String, Vec<String>> {
-    let mut defaults = BTreeMap::new();
-    for scenario in [
-        "movie_metadata",
-        "series_metadata",
-        "season_metadata",
-        "episode_metadata",
-        "person_metadata",
-        "image_fetch",
-        "search_by_title",
-        "search_by_external_id",
-    ] {
-        defaults.insert(
-            scenario.to_string(),
-            vec!["tmdb".to_string(), "tvdb".to_string()],
-        );
+fn default_scraper_default_routes() -> ScraperDefaultRoutes {
+    ScraperDefaultRoutes {
+        movie: vec!["tmdb".to_string(), "tvdb".to_string()],
+        series: vec!["tmdb".to_string(), "tvdb".to_string()],
+        image: vec!["tmdb".to_string(), "tvdb".to_string()],
     }
-    defaults
 }
 
 fn default_scraper_tvdb_base_url() -> String {
@@ -1761,8 +1767,16 @@ mod tests {
             ]
         );
         assert_eq!(
-            cfg.scraper.scenario_defaults.get("movie_metadata"),
-            Some(&vec!["tmdb".to_string(), "tvdb".to_string()])
+            cfg.scraper.default_routes.movie,
+            vec!["tmdb".to_string(), "tvdb".to_string()]
+        );
+        assert_eq!(
+            cfg.scraper.default_routes.series,
+            vec!["tmdb".to_string(), "tvdb".to_string()]
+        );
+        assert_eq!(
+            cfg.scraper.default_routes.image,
+            vec!["tmdb".to_string(), "tvdb".to_string()]
         );
         assert_eq!(cfg.scraper.tvdb.base_url, "https://api4.thetvdb.com/v4");
         assert_eq!(cfg.scraper.tvdb.timeout_seconds, 15);

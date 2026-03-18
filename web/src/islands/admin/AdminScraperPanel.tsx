@@ -31,7 +31,10 @@ import {
   updateSystemFlags,
   upsertScraperSettings,
 } from "@/lib/api/admin";
-import { SCRAPER_SCENARIO_KEYS } from "@/lib/admin/scraper-policy";
+import {
+  SCRAPER_DEFAULT_ROUTE_KEYS,
+  getScraperDefaultRouteLabel,
+} from "@/lib/admin/scraper-policy";
 import type { ApiError } from "@/lib/api/client";
 import { useAuthSession } from "@/lib/auth/use-auth-session";
 import { toast } from "@/lib/notifications/toast-store";
@@ -89,10 +92,8 @@ export function AdminScraperPanel() {
     setDefaultStrategy(payload.scraper?.default_strategy ?? "primary_with_fallback");
     setProvidersInput((payload.scraper?.providers ?? []).join(", "));
     const nextScenarioInputs: Record<string, string> = {};
-    SCRAPER_SCENARIO_KEYS.forEach((scenarioKey) => {
-      nextScenarioInputs[scenarioKey] = (
-        payload.scraper?.scenario_defaults?.[scenarioKey] ?? []
-      ).join(", ");
+    SCRAPER_DEFAULT_ROUTE_KEYS.forEach((routeKey) => {
+      nextScenarioInputs[routeKey] = (payload.scraper?.default_routes?.[routeKey] ?? []).join(", ");
     });
     setScenarioInputs(nextScenarioInputs);
     setTmdbApiKey(payload.tmdb?.api_key ?? "");
@@ -170,10 +171,10 @@ export function AdminScraperPanel() {
 
   async function onSave() {
     if (!settings) return;
-    const scenarioDefaults = Object.fromEntries(
-      SCRAPER_SCENARIO_KEYS.map((scenarioKey) => [
-        scenarioKey,
-        scenarioInputs[scenarioKey]
+    const defaultRoutes = Object.fromEntries(
+      SCRAPER_DEFAULT_ROUTE_KEYS.map((routeKey) => [
+        routeKey,
+        scenarioInputs[routeKey]
           ?.split(",")
           .map((item) => item.trim())
           .filter(Boolean) ?? [],
@@ -192,7 +193,7 @@ export function AdminScraperPanel() {
             .split(",")
             .map((item) => item.trim())
             .filter(Boolean),
-          scenario_defaults: scenarioDefaults,
+          default_routes: defaultRoutes as WebAppSettings["scraper"]["default_routes"],
           tvdb: {
             ...settings.scraper.tvdb,
             enabled: tvdbEnabled,
@@ -553,12 +554,12 @@ export function AdminScraperPanel() {
           <div className="mb-2 px-1">
             <h2 className="text-lg font-medium text-white">场景路由</h2>
             <p className="mt-1 text-xs text-slate-500">
-              各场景默认 Provider 退避链路，拖拽排序调整优先级。
+              默认按电影、电视剧、图像三类区分 Provider 链路，拖拽排序调整优先级。
             </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-            {SCRAPER_SCENARIO_KEYS.map((scenarioKey) => {
+            {SCRAPER_DEFAULT_ROUTE_KEYS.map((scenarioKey) => {
               const currentChainRaw = scenarioInputs[scenarioKey] ?? "";
               const currentChain = currentChainRaw
                 .split(",")
@@ -570,7 +571,7 @@ export function AdminScraperPanel() {
                   key={scenarioKey}
                   className="rounded-lg border border-white/10 bg-black/40 p-4 transition-colors hover:bg-black/60"
                 >
-                  <Field label={scenarioKey}>
+                  <Field label={getScraperDefaultRouteLabel(scenarioKey)}>
                     <SortableProviderList
                       providers={providers.map((p) => ({
                         id: p.provider_id,

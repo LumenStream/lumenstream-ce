@@ -9,7 +9,11 @@ impl AppInfra {
         let scraper = cfg.normalized_scraper_config();
         ScraperPolicySettings {
             default_strategy: scraper.default_strategy,
-            scenario_defaults: scraper.scenario_defaults,
+            default_routes: ls_scraper::ScraperDefaultRoutes {
+                movie: scraper.default_routes.movie,
+                series: scraper.default_routes.series,
+                image: scraper.default_routes.image,
+            },
         }
     }
 
@@ -30,10 +34,16 @@ impl AppInfra {
         &self,
         library_id: Option<Uuid>,
         item_type: &str,
+        force_image_refresh: bool,
     ) -> anyhow::Result<ScrapePlan> {
         let settings = self.scraper_policy_settings();
         let available = self.scraper_available_provider_ids();
         let scenario = infer_scenario_from_item_type(item_type);
+        let purpose = if force_image_refresh {
+            ScraperRoutePurpose::Image
+        } else {
+            ScraperRoutePurpose::Metadata
+        };
         let library_policy = match library_id {
             Some(library_id) => self
                 .get_library_by_id(library_id)
@@ -46,6 +56,7 @@ impl AppInfra {
             &settings,
             library_policy.as_ref(),
             scenario,
+            purpose,
             &available,
         ))
     }
@@ -201,7 +212,9 @@ impl AppInfra {
             return Ok(TmdbFillStatus::Skipped);
         }
 
-        let plan = self.build_scrape_plan(item.library_id, &item.item_type).await?;
+        let plan = self
+            .build_scrape_plan(item.library_id, &item.item_type, force_image_refresh)
+            .await?;
         if plan.provider_chain.is_empty() {
             info!(item_id = %item.id, item_type = %item.item_type, "scraper plan resolved no providers; skip");
             return Ok(TmdbFillStatus::Skipped);

@@ -820,11 +820,9 @@ const libraryStatusItems: AdminLibraryStatusItem[] = [
     library_type: "Series",
     enabled: true,
     scraper_policy: {
-      scenario_defaults: {
-        series_metadata: ["bangumi", "tvdb", "tmdb"],
-        episode_metadata: ["bangumi", "tvdb", "tmdb"],
-        image_fetch: ["bangumi", "tvdb", "tmdb"],
-      },
+      movie: ["tmdb", "tvdb"],
+      series: ["bangumi", "tvdb", "tmdb"],
+      image: ["bangumi", "tvdb", "tmdb"],
     },
     item_count: SERIES_ITEMS.length + EPISODE_ITEMS.length,
     last_item_updated_at: minutesAgo(22),
@@ -1269,15 +1267,10 @@ let settings: WebAppSettings = {
     enabled: false,
     default_strategy: "primary_with_fallback",
     providers: ["tmdb", "tvdb", "bangumi"],
-    scenario_defaults: {
-      movie_metadata: ["tmdb", "tvdb"],
-      series_metadata: ["tmdb", "tvdb"],
-      season_metadata: ["tmdb", "tvdb"],
-      episode_metadata: ["tmdb", "tvdb"],
-      person_metadata: ["tmdb", "tvdb"],
-      image_fetch: ["tmdb", "tvdb"],
-      search_by_title: ["tmdb", "tvdb"],
-      search_by_external_id: ["tmdb", "tvdb"],
+    default_routes: {
+      movie: ["tmdb", "tvdb"],
+      series: ["tmdb", "tvdb"],
+      image: ["tmdb", "tvdb"],
     },
     tvdb: {
       enabled: true,

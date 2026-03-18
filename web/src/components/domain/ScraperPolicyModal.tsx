@@ -3,7 +3,10 @@ import { ArrowDown, ArrowUp, Check } from "lucide-react";
 
 import { Modal } from "@/components/domain/Modal";
 import { Button } from "@/components/ui/button";
-import { SCRAPER_SCENARIO_KEYS } from "@/lib/admin/scraper-policy";
+import {
+  SCRAPER_LIBRARY_ROUTE_KEYS,
+  getScraperLibraryRouteLabel,
+} from "@/lib/admin/scraper-policy";
 
 interface ScraperPolicyModalProps {
   open: boolean;
@@ -23,7 +26,7 @@ export function ScraperPolicyModal({
   title = "配置刮削链路",
 }: ScraperPolicyModalProps) {
   const [policy, setPolicy] = useState<Record<string, string[]>>(initialPolicy);
-  const [activeScenario, setActiveScenario] = useState<string>(SCRAPER_SCENARIO_KEYS[0]);
+  const [activeScenario, setActiveScenario] = useState<string>(SCRAPER_LIBRARY_ROUTE_KEYS[0]);
 
   const currentProviders = policy[activeScenario] || [];
 
@@ -69,7 +72,7 @@ export function ScraperPolicyModal({
     <Modal open={open} title={title} onClose={onClose} showHeaderClose>
       <div className="space-y-4">
         <div className="flex gap-2 overflow-x-auto pb-2">
-          {SCRAPER_SCENARIO_KEYS.map((scenario) => (
+          {SCRAPER_LIBRARY_ROUTE_KEYS.map((scenario) => (
             <button
               key={scenario}
               onClick={() => setActiveScenario(scenario)}
@@ -79,7 +82,7 @@ export function ScraperPolicyModal({
                   : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
               }`}
             >
-              {scenario}
+              {getScraperLibraryRouteLabel(scenario)}
             </button>
           ))}
         </div>
