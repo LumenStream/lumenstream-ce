@@ -11,6 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GHCR_IMAGE_REPOSITORY: ghcr.io/lumenstream/lumenstream-ce-fullstack
 
 concurrency:
   group: ci-ghcr-${{ github.workflow }}-${{ github.ref }}
@@ -110,15 +111,11 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Set image repository
-        id: image
-        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}-fullstack" >> "$GITHUB_OUTPUT"
-
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.image.outputs.repository }}
+          images: ${{ env.GHCR_IMAGE_REPOSITORY }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch

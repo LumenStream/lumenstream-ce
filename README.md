@@ -55,7 +55,7 @@
 
 ## 🚀 快速部署
 
-LumenStream CE 推荐使用 Docker 进行一键部署，自带前后端一体镜像。默认镜像由 GitHub Actions 构建并发布到 GHCR（`ghcr.io/lumenstream/lumenstream-ce-fullstack`）。
+LumenStream CE 推荐使用 Docker 进行一键部署，自带前后端一体镜像。默认镜像由 GitHub Actions 构建并发布到 **LumenStream 组织** 的 GHCR（`ghcr.io/lumenstream/lumenstream-ce-fullstack`）。
 
 ### 环境准备
 
