@@ -16,7 +16,7 @@ pub struct MoviePilotResponse {
     #[serde(default)]
     pub success: bool,
     #[serde(default)]
-    pub message: String,
+    pub message: Option<String>,
     #[serde(default)]
     pub data: Value,
 }
@@ -33,13 +33,43 @@ pub struct MoviePilotContext {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MoviePilotMediaInfo {
     #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
+    pub en_title: String,
     #[serde(default)]
     pub year: String,
     #[serde(default)]
+    pub title_year: String,
+    #[serde(default)]
     pub tmdb_id: i64,
     #[serde(default)]
+    pub imdb_id: String,
+    #[serde(default)]
+    pub tvdb_id: String,
+    #[serde(default)]
     pub season: i32,
+    #[serde(default)]
+    pub original_title: String,
+    #[serde(default)]
+    pub release_date: String,
+    #[serde(default)]
+    pub backdrop_path: String,
+    #[serde(default)]
+    pub poster_path: String,
+    #[serde(default)]
+    pub overview: String,
+    #[serde(default)]
+    pub first_air_date: String,
+    #[serde(default)]
+    pub original_name: String,
+    #[serde(default)]
+    pub number_of_episodes: i32,
+    #[serde(default)]
+    pub number_of_seasons: i32,
     #[serde(default)]
     pub resource_pix: String,
     #[serde(default)]
@@ -112,6 +142,8 @@ pub struct MoviePilotSubscriptionPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MoviePilotDownloadPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_in: Option<MoviePilotMediaInfo>,
     pub torrent_in: MoviePilotTorrentInfo,
 }
 
@@ -241,9 +273,30 @@ impl MoviePilotClient {
         &mut self,
         payload: &MoviePilotDownloadPayload,
     ) -> anyhow::Result<MoviePilotResponse> {
+        let payload_value =
+            serde_json::to_value(payload).context("failed to serialize download payload")?;
+
+        if payload.media_in.is_some() {
+            match self
+                .post_json(
+                    format!("{}/api/v1/download", self.base_url),
+                    payload_value.clone(),
+                )
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "moviepilot contextual download failed, falling back to torrent-only endpoint"
+                    );
+                }
+            }
+        }
+
         self.post_json(
             format!("{}/api/v1/download/add", self.base_url),
-            serde_json::to_value(payload).context("failed to serialize download payload")?,
+            json!({ "torrent_in": payload.torrent_in }),
         )
         .await
     }
@@ -572,7 +625,15 @@ pub fn build_subscription_payload(
 }
 
 pub fn build_download_payload(result: &MoviePilotContext) -> MoviePilotDownloadPayload {
+    build_download_payload_with_context(result, None)
+}
+
+pub fn build_download_payload_with_context(
+    result: &MoviePilotContext,
+    media_info: Option<MoviePilotMediaInfo>,
+) -> MoviePilotDownloadPayload {
     MoviePilotDownloadPayload {
+        media_in: media_info,
         torrent_in: result.torrent_info.clone(),
     }
 }
@@ -590,10 +651,11 @@ pub fn summarize_moviepilot_result(result: &MoviePilotContext) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        MoviePilotContext, MoviePilotMediaInfo, MoviePilotTorrentInfo, choose_best_result,
-        filter_search_results,
+        MoviePilotContext, MoviePilotMediaInfo, MoviePilotResponse, MoviePilotTorrentInfo,
+        build_download_payload_with_context, choose_best_result, filter_search_results,
     };
     use ls_config::AgentMoviePilotFilterConfig;
+    use serde_json::json;
 
     fn sample_context(title: &str, seeders: i32, season: i32, size_gb: f64) -> MoviePilotContext {
         MoviePilotContext {
@@ -649,5 +711,39 @@ mod tests {
         )
         .expect("best result");
         assert_eq!(best.torrent_info.title, "b");
+    }
+
+    #[test]
+    fn moviepilot_response_accepts_null_message() {
+        let payload = json!({
+            "success": true,
+            "message": null,
+            "data": []
+        });
+
+        let parsed: MoviePilotResponse =
+            serde_json::from_value(payload).expect("response should deserialize");
+        assert_eq!(parsed.message, None);
+    }
+
+    #[test]
+    fn contextual_download_payload_includes_media_info() {
+        let result = sample_context("show", 10, 1, 12.0);
+        let payload = build_download_payload_with_context(
+            &result,
+            Some(MoviePilotMediaInfo {
+                title: "Show".to_string(),
+                r#type: "电视剧".to_string(),
+                tmdb_id: 42,
+                season: 1,
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(
+            payload.media_in.as_ref().map(|value| value.tmdb_id),
+            Some(42)
+        );
+        assert_eq!(payload.torrent_in.title, "show");
     }
 }

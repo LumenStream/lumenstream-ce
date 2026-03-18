@@ -14,8 +14,9 @@ pub use model::{
 pub use moviepilot::{
     MoviePilotClient, MoviePilotContext, MoviePilotDownloadPayload, MoviePilotFilterDecision,
     MoviePilotMediaInfo, MoviePilotProvider, MoviePilotResponse, MoviePilotSubscriptionPayload,
-    MoviePilotTorrentInfo, build_download_payload, build_subscription_payload, choose_best_result,
-    decode_search_contexts, filter_search_results, summarize_moviepilot_result,
+    MoviePilotTorrentInfo, build_download_payload, build_download_payload_with_context,
+    build_subscription_payload, choose_best_result, decode_search_contexts, filter_search_results,
+    summarize_moviepilot_result,
 };
 pub use provider::{
     AgentProviderCapability, AgentProviderDescriptor, AgentProviderHealthReport,

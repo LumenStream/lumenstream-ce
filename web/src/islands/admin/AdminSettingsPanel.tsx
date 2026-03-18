@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import { ErrorState, LoadingState } from "@/components/domain/DataState";
 import { Modal } from "@/components/domain/Modal";
@@ -43,15 +43,15 @@ export function AdminSettingsPanel() {
     );
   }
 
-  function applySettingsToForm(payload: WebAppSettings) {
+  const applySettingsToForm = useCallback((payload: WebAppSettings) => {
     setSettings(payload);
     setTmdbApiKey(payload.tmdb?.api_key ?? "");
     setLocalMediaExts((payload.scan?.local_media_exts ?? []).join(","));
     setLocalStreamRoute(String(payload.storage?.local_stream_route ?? "v1/streams/local"));
     setDraft(JSON.stringify(payload, null, 2));
-  }
+  }, []);
 
-  async function reload() {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
       const payload = await getSettings(false);
@@ -63,14 +63,14 @@ export function AdminSettingsPanel() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [applySettingsToForm]);
 
   useEffect(() => {
     if (!ready) {
       return;
     }
     void reload();
-  }, [ready]);
+  }, [ready, reload]);
 
   async function onSave() {
     setSavingSettings(true);

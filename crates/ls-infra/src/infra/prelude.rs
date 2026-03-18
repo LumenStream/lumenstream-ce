@@ -19,9 +19,10 @@ use ls_agent::{
     AgentProviderCapability, AgentProviderStatus, AgentRequest, AgentRequestCreateInput,
     AgentRequestDetail, AgentRequestEvent, LlmProvider, MoviePilotProvider,
     USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING, admin_status_to_user_status,
-    build_download_payload, build_subscription_payload, choose_best_result,
-    decode_search_contexts, infer_manual_actions, infer_workflow_kind, infer_workflow_steps,
-    normalize_int_list, summarize_moviepilot_result, workflow_required_capabilities,
+    MoviePilotContext, MoviePilotMediaInfo, build_download_payload_with_context,
+    build_subscription_payload, choose_best_result, decode_search_contexts,
+    infer_manual_actions, infer_workflow_kind, infer_workflow_steps, normalize_int_list,
+    summarize_moviepilot_result, workflow_required_capabilities,
 };
 use ls_config::{AppConfig, AuthConfig, WebAppConfig};
 use ls_scraper::{

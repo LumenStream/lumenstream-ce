@@ -277,10 +277,10 @@ describe("AdminSettingsPanel", () => {
     });
 
     const extInput = container.querySelector(
-      'input[placeholder=\"mp4,mkv,iso\"]'
+      'input[placeholder="mp4,mkv,iso"]'
     ) as HTMLInputElement | null;
     const routeInput = container.querySelector(
-      'input[placeholder=\"v1/streams/local\"]'
+      'input[placeholder="v1/streams/local"]'
     ) as HTMLInputElement | null;
     expect(extInput).not.toBeNull();
     expect(routeInput).not.toBeNull();
