@@ -934,13 +934,6 @@ VALUES ($1, $2, $3, $4, $5)
 
 }
 
-fn tmdb_fill_search_index_since(
-    started_at: DateTime<Utc>,
-    new_since: Option<DateTime<Utc>>,
-) -> DateTime<Utc> {
-    scrape_fill_search_index_since(started_at, new_since)
-}
-
 fn scrape_fill_search_index_since(
     started_at: DateTime<Utc>,
     new_since: Option<DateTime<Utc>>,

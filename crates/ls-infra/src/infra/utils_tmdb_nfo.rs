@@ -654,25 +654,6 @@ fn capture_nfo_tag(content: &str, tag: &str) -> Option<String> {
         .and_then(|matched| normalize_nfo_tag_value(matched.as_str()))
 }
 
-fn capture_nfo_uniqueid(content: &str, id_type: &str) -> Option<String> {
-    let pattern = format!(
-        r#"(?is)<uniqueid\b[^>]*\btype\s*=\s*["']{id_type}["'][^>]*>(.*?)</uniqueid>"#,
-        id_type = regex::escape(id_type),
-    );
-    let re = Regex::new(&pattern).ok()?;
-    let captures = re.captures(content)?;
-    captures
-        .get(1)
-        .and_then(|matched| normalize_nfo_tag_value(matched.as_str()))
-}
-
-fn strip_nfo_actor_blocks(content: &str) -> String {
-    let Ok(actor_re) = Regex::new(r"(?is)<actor\b[^>]*>.*?</actor>") else {
-        return content.to_string();
-    };
-    actor_re.replace_all(content, "").into_owned()
-}
-
 fn capture_nfo_tags(content: &str, tag: &str) -> Vec<String> {
     let pattern = format!(r"(?is)<{tag}>(.*?)</{tag}>", tag = regex::escape(tag));
     let Ok(re) = Regex::new(&pattern) else {

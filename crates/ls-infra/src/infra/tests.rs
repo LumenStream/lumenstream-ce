@@ -37,7 +37,7 @@ mod tests {
         select_best_movie_search_candidate, select_lumenbackend_stream_base_url, select_tmdb_logo_path,
         should_delete_linked_strm, should_fill_tmdb_for_item, strip_node_runtime_protected_fields,
         subtitle_codec_from_path, subtitle_row_to_media_stream, tmdb_cache_key,
-        tmdb_fill_search_index_since, tmdb_include_image_language, tmdb_logo_extension,
+        scrape_fill_search_index_since, tmdb_include_image_language, tmdb_logo_extension,
         tmdb_movie_official_rating, tmdb_movie_release_year, tmdb_tv_official_rating,
         validate_runtime_bootstrap_credentials, validate_runtime_config_against_schema,
         write_episode_nfo, write_movie_nfo, write_tvshow_nfo,
@@ -2302,7 +2302,7 @@ mod tests {
     }
 
     #[test]
-    fn tmdb_fill_search_index_since_prefers_new_since() {
+    fn scrape_fill_search_index_since_prefers_new_since() {
         let started_at = Utc
             .with_ymd_and_hms(2026, 3, 1, 12, 0, 0)
             .single()
@@ -2313,19 +2313,19 @@ mod tests {
             .expect("valid new_since timestamp");
 
         assert_eq!(
-            tmdb_fill_search_index_since(started_at, Some(new_since)),
+            scrape_fill_search_index_since(started_at, Some(new_since)),
             new_since
         );
     }
 
     #[test]
-    fn tmdb_fill_search_index_since_falls_back_to_started_at() {
+    fn scrape_fill_search_index_since_falls_back_to_started_at() {
         let started_at = Utc
             .with_ymd_and_hms(2026, 3, 1, 12, 0, 0)
             .single()
             .expect("valid start timestamp");
 
-        assert_eq!(tmdb_fill_search_index_since(started_at, None), started_at);
+        assert_eq!(scrape_fill_search_index_since(started_at, None), started_at);
     }
 
     #[test]
