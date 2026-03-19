@@ -172,7 +172,7 @@ pub fn infer_workflow_steps(
 
 pub fn infer_manual_actions(status_admin: &str, auto_handled: bool) -> Vec<AgentManualAction> {
     let mut actions = Vec::new();
-    if status_admin == "review_required" {
+    if matches!(status_admin, "review_required" | "waiting_user") {
         actions.push(AgentManualAction::new(
             "approve",
             "批准并重试",
@@ -187,7 +187,13 @@ pub fn infer_manual_actions(status_admin: &str, auto_handled: bool) -> Vec<Agent
 
     if matches!(
         status_admin,
-        "new" | "analyzing" | "auto_processing" | "approved" | "failed" | "review_required"
+        "new"
+            | "analyzing"
+            | "auto_processing"
+            | "approved"
+            | "failed"
+            | "review_required"
+            | "waiting_user"
     ) {
         actions.push(AgentManualAction::new(
             "manual_complete",
@@ -259,6 +265,13 @@ fn map_stage_to_step(stage: &str) -> Option<AgentWorkflowStepKey> {
     match stage {
         "queued" => Some(AgentWorkflowStepKey::Accepted),
         "normalize" => Some(AgentWorkflowStepKey::Normalize),
+        "analyzing" => Some(AgentWorkflowStepKey::Normalize),
+        "searching" => Some(AgentWorkflowStepKey::ProviderSearch),
+        "awaiting_user" => Some(AgentWorkflowStepKey::ManualReview),
+        "finalizing" => Some(AgentWorkflowStepKey::FilterDispatch),
+        "completed" => Some(AgentWorkflowStepKey::Notify),
+        "failed" => Some(AgentWorkflowStepKey::Notify),
+        "manual_review" => Some(AgentWorkflowStepKey::ManualReview),
         "library_check" => Some(AgentWorkflowStepKey::LibraryCheck),
         "gap_detect" => Some(AgentWorkflowStepKey::GapDetect),
         "metadata_enrich" => Some(AgentWorkflowStepKey::MetadataEnrich),
@@ -266,7 +279,6 @@ fn map_stage_to_step(stage: &str) -> Option<AgentWorkflowStepKey> {
         "mp_download" | "mp_subscribe" => Some(AgentWorkflowStepKey::FilterDispatch),
         "verify" => Some(AgentWorkflowStepKey::Verify),
         "notify" => Some(AgentWorkflowStepKey::Notify),
-        "manual_review" => Some(AgentWorkflowStepKey::ManualReview),
         _ => None,
     }
 }

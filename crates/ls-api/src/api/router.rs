@@ -91,10 +91,15 @@ fn build_api_scope(
         .route("/api/auth/register", web::post().to(register_with_invite))
         .route("/api/requests", web::get().to(list_my_agent_requests))
         .route("/api/requests", web::post().to(create_my_agent_request))
+        .route("/api/requests/ws", web::get().to(my_agent_requests_ws))
         .route("/api/requests/{request_id}", web::get().to(get_my_agent_request))
         .route(
             "/api/requests/{request_id}/resubmit",
             web::post().to(resubmit_my_agent_request),
+        )
+        .route(
+            "/api/requests/{request_id}/reply",
+            web::post().to(reply_my_agent_request),
         )
         .route("/Users/Public", web::get().to(get_public_users))
         .route("/Users/ForgotPassword", web::post().to(forgot_password))
@@ -739,6 +744,7 @@ fn build_api_scope(
             web::post().to(admin_rescrape_item),
         )
         .route("/admin/requests", web::get().to(admin_list_agent_requests))
+        .route("/admin/requests/ws", web::get().to(admin_agent_requests_ws))
         .route("/admin/requests/{request_id}", web::get().to(admin_get_agent_request))
         .route("/admin/agent/providers", web::get().to(admin_list_agent_providers))
         .route(

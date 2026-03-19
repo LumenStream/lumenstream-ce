@@ -27,6 +27,8 @@ import {
   adminGetAgentSettings,
   adminListAgentProviders,
   adminGetRequest,
+  getAdminRequestsWebSocketUrl,
+  getRequestsWebSocketToken,
   adminListRequests,
   adminRetryRequest,
   adminReviewRequest,
@@ -83,6 +85,8 @@ function makeDefaultAgentSettings(): AgentSettings {
   return {
     enabled: true,
     auto_mode: "automatic",
+    max_rounds: 10,
+    question_timeout_minutes: 1440,
     missing_scan_enabled: true,
     missing_scan_cron: "0 */30 * * * *",
     auto_close_on_library_hit: true,
@@ -176,6 +180,52 @@ export function AdminRequestsPanel() {
     }
     void reload("");
   }, [ready, reload]);
+
+  useEffect(() => {
+    if (!ready || typeof WebSocket === "undefined") {
+      return;
+    }
+    const token = getRequestsWebSocketToken();
+    if (!token) {
+      return;
+    }
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectDelay = 1000;
+
+    const connect = () => {
+      if (closed) return;
+      ws = new WebSocket(getAdminRequestsWebSocketUrl(token));
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+      };
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as { request_id?: string };
+          void reload(statusFilter);
+          if (parsed.request_id && detail?.request.id === parsed.request_id) {
+            void onSelect(parsed.request_id);
+          }
+        } catch {
+          // Ignore malformed websocket events.
+        }
+      };
+      ws.onerror = () => ws?.close();
+      ws.onclose = () => {
+        if (closed) return;
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [detail?.request.id, onSelect, ready, reload, statusFilter]);
 
   async function onReview(action: AgentReviewRequest["action"]) {
     if (!detail) return;
@@ -620,6 +670,35 @@ export function AdminRequestsPanel() {
                   </div>
 
                   <div className="pt-2">
+                    <label className="block space-y-1.5 pb-4">
+                      <span className="text-sm font-medium">最大自动轮次</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={String(settings.max_rounds)}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            max_rounds: Number(event.target.value || 10),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="block space-y-1.5 pb-4">
+                      <span className="text-sm font-medium">提问等待超时（分钟）</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={String(settings.question_timeout_minutes)}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            question_timeout_minutes: Number(event.target.value || 1440),
+                          }))
+                        }
+                      />
+                    </label>
                     <label className="block space-y-1.5">
                       <span className="text-sm font-medium">缺集扫描 Cron 表达式</span>
                       <Input

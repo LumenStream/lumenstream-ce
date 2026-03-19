@@ -161,6 +161,8 @@ describe("AdminScraperPanel", () => {
         agent: {
           enabled: false,
           auto_mode: "automatic",
+          max_rounds: 10,
+          question_timeout_minutes: 1440,
           missing_scan_enabled: false,
           missing_scan_cron: "0 */30 * * * *",
           auto_close_on_library_hit: true,

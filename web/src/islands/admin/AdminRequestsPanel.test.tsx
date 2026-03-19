@@ -23,6 +23,8 @@ vi.mock("@/lib/api/requests", () => ({
   adminGetRequest: (...args: unknown[]) => adminGetRequestMock(...args),
   adminGetAgentSettings: (...args: unknown[]) => adminGetAgentSettingsMock(...args),
   adminListAgentProviders: (...args: unknown[]) => adminListAgentProvidersMock(...args),
+  getAdminRequestsWebSocketUrl: vi.fn(() => "ws://127.0.0.1:8096/admin/requests/ws?token=test"),
+  getRequestsWebSocketToken: vi.fn(() => null),
   adminRetryRequest: vi.fn(),
   adminReviewRequest: vi.fn(),
   adminTestMoviePilot: (...args: unknown[]) => adminTestMoviePilotMock(...args),
@@ -129,6 +131,8 @@ describe("AdminRequestsPanel", () => {
     adminGetAgentSettingsMock.mockResolvedValue({
       enabled: true,
       auto_mode: "automatic",
+      max_rounds: 10,
+      question_timeout_minutes: 1440,
       missing_scan_enabled: true,
       missing_scan_cron: "0 */30 * * * *",
       auto_close_on_library_hit: true,

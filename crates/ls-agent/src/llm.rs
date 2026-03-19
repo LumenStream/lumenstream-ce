@@ -44,6 +44,33 @@ pub struct LlmAgentExecutionPlan {
     pub reject_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmAgentLoopAction {
+    pub action: String,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub year: Option<i32>,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub season: Option<i32>,
+    #[serde(default)]
+    pub selected_indices: Vec<usize>,
+    #[serde(default)]
+    pub question_prompt: Option<String>,
+    #[serde(default)]
+    pub question_helper_text: Option<String>,
+    #[serde(default)]
+    pub question_context_brief: Option<String>,
+    #[serde(default)]
+    pub question_options: Vec<String>,
+    #[serde(default)]
+    pub allow_free_text: bool,
+    #[serde(default)]
+    pub reason: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmProvider {
     config: AgentLlmConfig,
@@ -213,6 +240,91 @@ Decision goals:
             &serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string()),
             "plan_media_request_execution",
             "Decide whether to download, subscribe, reject or send the request to manual review.",
+            schema,
+        )
+        .await
+    }
+
+    pub async fn decide_loop_action(&self, context: &Value) -> anyhow::Result<LlmAgentLoopAction> {
+        if !self.is_configured() {
+            anyhow::bail!("LLM provider is not configured or disabled");
+        }
+
+        let system_prompt = r#"You are an autonomous media request agent running inside a strict loop runtime.
+You must inspect the provided context and call the action selection tool exactly once.
+
+Loop rules:
+1. Choose exactly one next action for this round.
+2. Prefer to resolve metadata ambiguity before searching MoviePilot.
+3. MoviePilot search MUST include a year. If the year is unknown, ask the user or use metadata tools first.
+4. Use bangumi only for anime/series style titles or when other metadata tools are weak.
+5. Use tvdb for series-oriented matching and episode context.
+6. Use tmdb for general movie/series matching and year confirmation.
+7. If there is enough information and candidate resources exist, decide whether to download, subscribe, or both.
+8. If the case is blocked or risky, ask the user or send to manual_review.
+9. Never expose internal reasoning in question text or reason fields.
+10. Always call the tool; do not answer in plain text."#;
+
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "tmdb_search",
+                        "tvdb_search",
+                        "bangumi_search",
+                        "moviepilot_search",
+                        "ask_user",
+                        "complete_download",
+                        "complete_subscription",
+                        "complete_download_and_subscription",
+                        "manual_review",
+                        "fail_request"
+                    ]
+                },
+                "query": { "type": ["string", "null"] },
+                "year": { "type": ["integer", "null"] },
+                "media_type": { "type": ["string", "null"] },
+                "season": { "type": ["integer", "null"] },
+                "selected_indices": {
+                    "type": "array",
+                    "items": { "type": "integer", "minimum": 0 },
+                    "default": []
+                },
+                "question_prompt": { "type": ["string", "null"] },
+                "question_helper_text": { "type": ["string", "null"] },
+                "question_context_brief": { "type": ["string", "null"] },
+                "question_options": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "allow_free_text": { "type": "boolean", "default": true },
+                "reason": { "type": "string" }
+            },
+            "required": [
+                "action",
+                "query",
+                "year",
+                "media_type",
+                "season",
+                "selected_indices",
+                "question_prompt",
+                "question_helper_text",
+                "question_context_brief",
+                "question_options",
+                "allow_free_text",
+                "reason"
+            ],
+            "additionalProperties": false
+        });
+
+        self.complete_with_tool(
+            system_prompt,
+            &serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string()),
+            "decide_agent_loop_action",
+            "Choose the single next action for the current agent loop round.",
             schema,
         )
         .await

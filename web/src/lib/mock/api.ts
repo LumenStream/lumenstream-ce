@@ -1305,6 +1305,8 @@ let settings: WebAppSettings = {
   agent: {
     enabled: true,
     auto_mode: "automatic",
+    max_rounds: 10,
+    question_timeout_minutes: 1440,
     missing_scan_enabled: true,
     missing_scan_cron: "0 */30 * * * *",
     auto_close_on_library_hit: true,
@@ -4689,6 +4691,12 @@ const agentRequests: AgentRequest[] = [
     agent_note: "已命中 MoviePilot 搜索，正在筛选资源。",
     provider_payload: {},
     provider_result: {},
+    public_state: { phase: "searching", message: "已匹配到候选资源，Agent 正在做最终决策。" },
+    current_round: 2,
+    max_rounds: 10,
+    public_phase: "searching",
+    waiting_for_user: false,
+    pending_question: null,
     last_error: null,
     created_at: minutesAgo(25),
     updated_at: minutesAgo(5),
@@ -4716,6 +4724,12 @@ const agentRequests: AgentRequest[] = [
     agent_note: "MoviePilot 未找到满足规则的资源，等待管理员处理。",
     provider_payload: {},
     provider_result: { result_count: 1 },
+    public_state: { phase: "manual_review", message: "未找到可自动处理结果，已转人工处理。" },
+    current_round: 4,
+    max_rounds: 10,
+    public_phase: "manual_review",
+    waiting_for_user: false,
+    pending_question: null,
     last_error: "agent fallback to review",
     created_at: minutesAgo(90),
     updated_at: minutesAgo(45),
@@ -4735,6 +4749,8 @@ const agentRequestEvents = new Map<string, AgentRequestEvent[]>([
         actor_username: "admin",
         summary: "已创建求片工单",
         detail: { source: "user_submit" },
+        visibility: "public",
+        channel: "timeline",
         created_at: minutesAgo(25),
       },
       {
@@ -4745,6 +4761,8 @@ const agentRequestEvents = new Map<string, AgentRequestEvent[]>([
         actor_username: "system",
         summary: "正在搜索资源",
         detail: { tmdb_id: 157336 },
+        visibility: "public",
+        channel: "timeline",
         created_at: minutesAgo(6),
       },
     ],
@@ -4760,6 +4778,8 @@ const agentRequestEvents = new Map<string, AgentRequestEvent[]>([
         actor_username: "system",
         summary: "系统自动发现缺集/漏季并创建工单",
         detail: {},
+        visibility: "public",
+        channel: "timeline",
         created_at: minutesAgo(90),
       },
       {
@@ -4770,6 +4790,8 @@ const agentRequestEvents = new Map<string, AgentRequestEvent[]>([
         actor_username: "system",
         summary: "未找到可自动处理结果，已转人工处理",
         detail: { result_count: 1 },
+        visibility: "public",
+        channel: "timeline",
         created_at: minutesAgo(45),
       },
     ],
@@ -4955,6 +4977,12 @@ function myAgentRequestDetail(requestId: string): AgentRequestDetail {
   return {
     request: clone(request),
     events: clone(agentRequestEvents.get(requestId) ?? []),
+    public_events: clone(agentRequestEvents.get(requestId) ?? []).filter(
+      (event) => event.visibility !== "private"
+    ),
+    private_events: clone(agentRequestEvents.get(requestId) ?? []).filter(
+      (event) => event.visibility === "private"
+    ),
     workflow_kind: mockWorkflowKindForRequest(request),
     workflow_steps: mockWorkflowStepsForRequest(request),
     required_capabilities:
@@ -5005,6 +5033,12 @@ export async function mockCreateMyAgentRequest(
     agent_note: "请求已入队，等待处理。",
     provider_payload: {},
     provider_result: {},
+    public_state: { phase: "queued", message: "请求已提交，等待 Agent 处理。" },
+    current_round: 0,
+    max_rounds: 10,
+    public_phase: "queued",
+    waiting_for_user: false,
+    pending_question: null,
     last_error: null,
     created_at: now,
     updated_at: now,
@@ -5020,6 +5054,8 @@ export async function mockCreateMyAgentRequest(
       actor_username: "admin",
       summary: "已创建求片工单",
       detail: { source: request.source },
+      visibility: "public",
+      channel: "timeline",
       created_at: now,
     },
   ]);
@@ -5049,6 +5085,8 @@ export async function mockResubmitMyAgentRequest(requestId: string): Promise<Age
     actor_username: "admin",
     summary: "重新触发处理",
     detail: {},
+    visibility: "public",
+    channel: "timeline",
     created_at: request.updated_at,
   });
   agentRequestEvents.set(requestId, events);
@@ -5110,6 +5148,8 @@ export async function mockAdminReviewAgentRequest(
     actor_username: "admin",
     summary: `管理员执行了 ${payload.action}`,
     detail: { note: payload.note || "" },
+    visibility: "public",
+    channel: "timeline",
     created_at: request.updated_at,
   });
   agentRequestEvents.set(requestId, events);

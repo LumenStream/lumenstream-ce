@@ -16,10 +16,10 @@ use hmac::{Hmac, Mac};
 use md5::compute as md5_compute;
 use meilisearch_sdk::{client::Client as MeiliClient, indexes::Index as MeiliIndex};
 use ls_agent::{
-    AgentProviderCapability, AgentProviderStatus, AgentRequest, AgentRequestCreateInput,
-    AgentRequestDetail, AgentRequestEvent, LlmAgentExecutionPlan, LlmParseResult, LlmProvider,
-    MoviePilotProvider, USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING,
-    admin_status_to_user_status,
+    AgentPendingQuestion, AgentProviderCapability, AgentProviderStatus, AgentQuestionOption,
+    AgentRequest, AgentRequestCreateInput, AgentRequestDetail, AgentRequestEvent,
+    LlmAgentExecutionPlan, LlmAgentLoopAction, LlmParseResult, LlmProvider, MoviePilotProvider,
+    USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING, admin_status_to_user_status,
     MoviePilotContext, MoviePilotExactSearchQuery, MoviePilotMediaInfo,
     build_download_payload_with_context,
     build_subscription_payload, choose_best_result, decode_search_contexts,
@@ -71,6 +71,7 @@ pub struct AppInfra {
     notification_tx: broadcast::Sender<Notification>,
     task_run_tx: broadcast::Sender<TaskRunEvent>,
     recharge_order_tx: broadcast::Sender<RechargeOrderEvent>,
+    agent_request_tx: broadcast::Sender<AgentRequestRealtimeEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +86,20 @@ pub struct RechargeOrderEvent {
     pub event: String,
     pub order: BillingRechargeOrder,
     pub emitted_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentRequestRealtimeEvent {
+    pub request_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub status_user: String,
+    pub status_admin: String,
+    pub public_phase: String,
+    pub waiting_for_user: bool,
+    pub current_round: i32,
+    pub max_rounds: i32,
+    pub updated_at: DateTime<Utc>,
+    pub latest_event: Option<AgentRequestEvent>,
 }
 
 #[derive(Clone)]

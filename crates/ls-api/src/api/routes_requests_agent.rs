@@ -25,6 +25,15 @@ struct AgentRequestsQuery {
     status_admin: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct AgentRequestReplyPayload {
+    question_id: String,
+    #[serde(default)]
+    selected_option: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
 async fn list_my_agent_requests(
     State(state): State<ApiContext>,
     headers: HeaderMap,
@@ -184,6 +193,48 @@ async fn resubmit_my_agent_request(
         Err(err) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("failed to retry request: {err}"),
+        ),
+    }
+}
+
+async fn reply_my_agent_request(
+    State(state): State<ApiContext>,
+    headers: HeaderMap,
+    uri: Uri,
+    AxPath(request_id): AxPath<Uuid>,
+    Json(payload): Json<AgentRequestReplyPayload>,
+) -> Response {
+    let user = match require_auth(&state, &headers, &uri).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let Some(user_id) = parse_user_uuid(&user) else {
+        return error_response(StatusCode::UNAUTHORIZED, "invalid user");
+    };
+    match state
+        .infra
+        .reply_to_agent_request_question(
+            user_id,
+            request_id,
+            &payload.question_id,
+            payload.selected_option.as_deref(),
+            payload.text.as_deref(),
+        )
+        .await
+    {
+        Ok(Some(detail)) => {
+            if let Ok(job) = state.infra.enqueue_agent_request_job(detail.request.id).await {
+                let infra = state.infra.clone();
+                tokio::spawn(async move {
+                    let _ = infra.process_job(job.id).await;
+                });
+            }
+            Json(detail).into_response()
+        }
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "request not found"),
+        Err(err) => error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("failed to reply to request: {err}"),
         ),
     }
 }
@@ -449,4 +500,139 @@ async fn admin_test_agent_moviepilot(
             &format!("moviepilot connection test failed: {err}"),
         ),
     }
+}
+
+async fn my_agent_requests_ws(
+    State(state): State<ApiContext>,
+    req: HttpRequest,
+    body: web::Payload,
+) -> Response {
+    let headers = HeaderMap(req.headers().clone());
+    let uri = Uri(req.uri().clone());
+    let user = match require_auth(&state, &headers, &uri).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let Some(user_id) = parse_user_uuid(&user) else {
+        return error_response(StatusCode::UNAUTHORIZED, "invalid user");
+    };
+
+    let (response, mut session, mut msg_stream) = match actix_ws::handle(&req, body) {
+        Ok(v) => v,
+        Err(err) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("failed to upgrade websocket: {err}"),
+            );
+        }
+    };
+    let mut rx = state.infra.subscribe_agent_requests();
+
+    actix_web::rt::spawn(async move {
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
+        loop {
+            tokio::select! {
+                _ = heartbeat.tick() => {
+                    if session.ping(b"heartbeat").await.is_err() {
+                        break;
+                    }
+                }
+                maybe_msg = msg_stream.next() => {
+                    match maybe_msg {
+                        Some(Ok(actix_ws::Message::Close(_))) => break,
+                        Some(Ok(actix_ws::Message::Ping(bytes))) => {
+                            if session.pong(&bytes).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) => break,
+                        None => break,
+                    }
+                }
+                recv = rx.recv() => {
+                    match recv {
+                        Ok(event) => {
+                            if event.user_id == Some(user_id)
+                                && let Ok(text) = serde_json::to_string(&event)
+                                && session.text(text).await.is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+        let _ = session.close(None).await;
+    });
+
+    response
+}
+
+async fn admin_agent_requests_ws(
+    State(state): State<ApiContext>,
+    req: HttpRequest,
+    body: web::Payload,
+) -> Response {
+    let headers = HeaderMap(req.headers().clone());
+    let uri = Uri(req.uri().clone());
+    if let Err(resp) = require_admin(&state, &headers, &uri).await {
+        return resp;
+    }
+
+    let (response, mut session, mut msg_stream) = match actix_ws::handle(&req, body) {
+        Ok(v) => v,
+        Err(err) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("failed to upgrade websocket: {err}"),
+            );
+        }
+    };
+    let mut rx = state.infra.subscribe_agent_requests();
+
+    actix_web::rt::spawn(async move {
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
+        loop {
+            tokio::select! {
+                _ = heartbeat.tick() => {
+                    if session.ping(b"heartbeat").await.is_err() {
+                        break;
+                    }
+                }
+                maybe_msg = msg_stream.next() => {
+                    match maybe_msg {
+                        Some(Ok(actix_ws::Message::Close(_))) => break,
+                        Some(Ok(actix_ws::Message::Ping(bytes))) => {
+                            if session.pong(&bytes).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) => break,
+                        None => break,
+                    }
+                }
+                recv = rx.recv() => {
+                    match recv {
+                        Ok(event) => {
+                            if let Ok(text) = serde_json::to_string(&event)
+                                && session.text(text).await.is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+        let _ = session.close(None).await;
+    });
+
+    response
 }

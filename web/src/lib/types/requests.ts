@@ -35,10 +35,32 @@ export interface AgentRequest {
   agent_note: string;
   provider_payload: Record<string, unknown>;
   provider_result: Record<string, unknown>;
+  public_state: Record<string, unknown>;
+  current_round: number;
+  max_rounds: number;
+  public_phase: string;
+  waiting_for_user: boolean;
+  pending_question?: AgentPendingQuestion | null;
   last_error?: string | null;
   created_at: string;
   updated_at: string;
   closed_at?: string | null;
+}
+
+export interface AgentQuestionOption {
+  value: string;
+  label: string;
+}
+
+export interface AgentPendingQuestion {
+  id: string;
+  prompt: string;
+  helper_text?: string | null;
+  options: AgentQuestionOption[];
+  allow_free_text: boolean;
+  context_brief?: string | null;
+  asked_at: string;
+  deadline_at?: string | null;
 }
 
 export interface AgentRequestEvent {
@@ -49,6 +71,8 @@ export interface AgentRequestEvent {
   actor_username?: string | null;
   summary: string;
   detail: Record<string, unknown>;
+  visibility: string;
+  channel: string;
   created_at: string;
 }
 
@@ -69,10 +93,18 @@ export interface AgentManualAction {
 export interface AgentRequestDetail {
   request: AgentRequest;
   events: AgentRequestEvent[];
+  public_events: AgentRequestEvent[];
+  private_events: AgentRequestEvent[];
   workflow_kind: string;
   workflow_steps: AgentWorkflowStepState[];
   required_capabilities: string[];
   manual_actions: AgentManualAction[];
+}
+
+export interface AgentReplyRequest {
+  question_id: string;
+  selected_option?: string | null;
+  text?: string | null;
 }
 
 export interface AgentCreateRequest {
@@ -131,6 +163,8 @@ export interface AgentMoviePilotSettings {
 export interface AgentSettings {
   enabled: boolean;
   auto_mode: string;
+  max_rounds: number;
+  question_timeout_minutes: number;
   missing_scan_enabled: boolean;
   missing_scan_cron: string;
   auto_close_on_library_hit: boolean;
@@ -150,4 +184,17 @@ export interface AgentProviderStatus {
   capabilities: string[];
   message: string;
   checked_at?: string | null;
+}
+
+export interface AgentRequestRealtimeEvent {
+  request_id: string;
+  user_id?: string | null;
+  status_user: string;
+  status_admin: string;
+  public_phase: string;
+  waiting_for_user: boolean;
+  current_round: number;
+  max_rounds: number;
+  updated_at: string;
+  latest_event?: AgentRequestEvent | null;
 }

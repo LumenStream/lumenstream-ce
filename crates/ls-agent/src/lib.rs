@@ -4,12 +4,12 @@ pub mod moviepilot;
 pub mod provider;
 pub mod workflow;
 
-pub use llm::{LlmAgentExecutionPlan, LlmParseResult, LlmProvider};
+pub use llm::{LlmAgentExecutionPlan, LlmAgentLoopAction, LlmParseResult, LlmProvider};
 pub use model::{
-    AgentManualAction, AgentRequest, AgentRequestCreateInput, AgentRequestDetail,
-    AgentRequestEvent, USER_STATUS_ACTION_REQUIRED, USER_STATUS_CLOSED, USER_STATUS_FAILED,
-    USER_STATUS_PROCESSING, USER_STATUS_SUCCESS, admin_status_to_user_status, is_open_admin_status,
-    normalize_int_list,
+    AgentManualAction, AgentPendingQuestion, AgentQuestionOption, AgentRequest,
+    AgentRequestCreateInput, AgentRequestDetail, AgentRequestEvent, USER_STATUS_ACTION_REQUIRED,
+    USER_STATUS_CLOSED, USER_STATUS_FAILED, USER_STATUS_PROCESSING, USER_STATUS_SUCCESS,
+    admin_status_to_user_status, is_open_admin_status, normalize_int_list,
 };
 pub use moviepilot::{
     MoviePilotClient, MoviePilotContext, MoviePilotDownloadPayload, MoviePilotExactSearchQuery,

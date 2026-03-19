@@ -21,6 +21,12 @@ struct AgentRequestRow {
     agent_note: String,
     provider_payload: Value,
     provider_result: Value,
+    public_state: Value,
+    current_round: i32,
+    max_rounds: i32,
+    public_phase: String,
+    waiting_for_user: bool,
+    pending_question: Option<Value>,
     last_error: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -36,6 +42,8 @@ struct AgentRequestEventRow {
     actor_username: Option<String>,
     summary: String,
     detail: Value,
+    visibility: String,
+    channel: String,
     created_at: DateTime<Utc>,
 }
 
@@ -76,6 +84,14 @@ impl From<AgentRequestRow> for AgentRequest {
             agent_note: value.agent_note,
             provider_payload: value.provider_payload,
             provider_result: value.provider_result,
+            public_state: value.public_state,
+            current_round: value.current_round,
+            max_rounds: value.max_rounds,
+            public_phase: value.public_phase,
+            waiting_for_user: value.waiting_for_user,
+            pending_question: value
+                .pending_question
+                .and_then(|raw| serde_json::from_value(raw).ok()),
             last_error: value.last_error,
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -94,6 +110,8 @@ impl From<AgentRequestEventRow> for AgentRequestEvent {
             actor_username: value.actor_username,
             summary: value.summary,
             detail: value.detail,
+            visibility: value.visibility,
+            channel: value.channel,
             created_at: value.created_at,
         }
     }
@@ -138,7 +156,7 @@ struct AgentMoviePilotSearchOutcome {
     exact_query: Option<MoviePilotExactSearchQuery>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct AgentIntentAnalysis {
     raw_text: String,
     original_request_type: String,
@@ -153,6 +171,36 @@ struct AgentIntentAnalysis {
     constraints: Vec<String>,
     parser: String,
     is_ambiguous: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AgentUserReply {
+    question_id: String,
+    #[serde(default)]
+    selected_option: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AgentLoopRuntimeState {
+    #[serde(default)]
+    intent: Option<AgentIntentAnalysis>,
+    #[serde(default)]
+    tmdb_metadata: Option<Value>,
+    #[serde(default)]
+    tvdb_result: Option<Value>,
+    #[serde(default)]
+    bangumi_result: Option<Value>,
+    #[serde(default)]
+    moviepilot_result: Option<Value>,
+    #[serde(default)]
+    moviepilot_contexts: Vec<MoviePilotContext>,
+    #[serde(default)]
+    user_replies: Vec<AgentUserReply>,
+    #[serde(default)]
+    latest_reason: Option<String>,
 }
 
 impl AppInfra {
@@ -177,7 +225,11 @@ LIMIT $3
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        Ok(rows
+            .into_iter()
+            .map(Into::into)
+            .map(scrub_agent_request_for_user)
+            .collect())
     }
 
     pub async fn list_admin_agent_requests(
@@ -211,7 +263,7 @@ LIMIT $3
             return Ok(None);
         };
         let events = self.list_agent_request_events(request_id).await?;
-        Ok(Some(self.build_agent_request_detail(request, events)))
+        Ok(Some(self.build_agent_request_detail(request, events, true)))
     }
 
     pub async fn get_agent_request_detail_for_user(
@@ -219,13 +271,20 @@ LIMIT $3
         user_id: Uuid,
         request_id: Uuid,
     ) -> anyhow::Result<Option<AgentRequestDetail>> {
-        let Some(detail) = self.get_agent_request_detail(request_id).await? else {
+        let Some(request) = self.get_agent_request(request_id).await? else {
             return Ok(None);
         };
-        if detail.request.user_id != Some(user_id) {
+        if request.user_id != Some(user_id) {
             return Ok(None);
         }
-        Ok(Some(detail))
+        let request = scrub_agent_request_for_user(request);
+        let events = self
+            .list_agent_request_events(request_id)
+            .await?
+            .into_iter()
+            .filter(|event| event.visibility != "private")
+            .collect::<Vec<_>>();
+        Ok(Some(self.build_agent_request_detail(request, events, false)))
     }
 
     pub async fn list_agent_provider_statuses(&self) -> anyhow::Result<Vec<AgentProviderStatus>> {
@@ -318,12 +377,15 @@ LIMIT $3
 INSERT INTO agent_requests (
     id, request_type, source, user_id, title, content, media_type, tmdb_id, media_item_id, series_id,
     season_numbers, episode_numbers, status_user, status_admin, agent_stage, priority, auto_handled,
-    admin_note, agent_note, provider_payload, provider_result, created_at, updated_at
+    admin_note, agent_note, provider_payload, provider_result, public_state, runtime_state,
+    current_round, max_rounds, public_phase, waiting_for_user, pending_question, question_deadline,
+    created_at, updated_at
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13, $14, $15, 0, false,
-    '', '', '{}'::jsonb, '{}'::jsonb, $16, $16
+    '', '', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+    0, $16, 'queued', false, NULL, NULL, $17, $17
 )
             "#,
         )
@@ -346,6 +408,7 @@ VALUES (
         .bind(admin_status_to_user_status(status_admin))
         .bind(status_admin)
         .bind("queued")
+        .bind(cfg.max_rounds.clamp(1, 20))
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -413,6 +476,7 @@ VALUES (
                     json!({ "note": note }),
                 )
                 .await?;
+                self.clear_agent_waiting_state(request_id).await?;
             }
             "reject" => {
                 self.update_request_state_with_event(
@@ -433,6 +497,7 @@ VALUES (
                     json!({ "note": note }),
                 )
                 .await?;
+                self.clear_agent_waiting_state(request_id).await?;
                 if let Some(user_id) = current.user_id {
                     let _ = self
                         .create_notification(
@@ -469,6 +534,7 @@ VALUES (
                     json!({ "note": note }),
                 )
                 .await?;
+                self.clear_agent_waiting_state(request_id).await?;
             }
             "manual_complete" => {
                 self.update_request_state_with_event(
@@ -489,6 +555,7 @@ VALUES (
                     json!({ "note": note }),
                 )
                 .await?;
+                self.clear_agent_waiting_state(request_id).await?;
             }
             _ => anyhow::bail!("invalid review action"),
         }
@@ -522,7 +589,125 @@ VALUES (
             json!({}),
         )
         .await?;
+        self.clear_agent_waiting_state(request_id).await?;
         self.get_agent_request_detail(request_id).await
+    }
+
+    pub async fn reply_to_agent_request_question(
+        &self,
+        user_id: Uuid,
+        request_id: Uuid,
+        question_id: &str,
+        selected_option: Option<&str>,
+        text: Option<&str>,
+    ) -> anyhow::Result<Option<AgentRequestDetail>> {
+        let Some(mut request) = self.get_agent_request(request_id).await? else {
+            return Ok(None);
+        };
+        if request.user_id != Some(user_id) {
+            return Ok(None);
+        }
+        let Some(question) = request.pending_question.clone() else {
+            anyhow::bail!("request is not waiting for user input");
+        };
+        if question.id != question_id {
+            anyhow::bail!("question_id does not match current pending question");
+        }
+
+        let selected_option = selected_option
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let text = text
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        if selected_option.is_none() && text.is_none() {
+            anyhow::bail!("reply content is required");
+        }
+
+        let mut runtime_state = self.load_agent_runtime_state(request_id).await?;
+        runtime_state.user_replies.push(AgentUserReply {
+            question_id: question_id.to_string(),
+            selected_option: selected_option.clone(),
+            text: text.clone(),
+            created_at: Utc::now(),
+        });
+
+        let reply_text = [selected_option.clone(), text.clone()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" / ");
+        if !reply_text.trim().is_empty() {
+            request.content = format!(
+                "{}\n\n[User Reply {}] {}",
+                request.content.trim(),
+                question_id,
+                reply_text.trim()
+            )
+            .trim()
+            .to_string();
+            sqlx::query(
+                "UPDATE agent_requests SET content = $2, updated_at = now() WHERE id = $1",
+            )
+            .bind(request.id)
+            .bind(&request.content)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        self.persist_agent_runtime_snapshot(
+            &mut request,
+            &runtime_state,
+            &json!({
+                "phase": "analyzing",
+                "message": "已收到你的补充信息，Agent 正在继续处理。",
+            }),
+            "analyzing",
+            false,
+            None,
+            None,
+        )
+        .await?;
+
+        sqlx::query(
+            r#"
+UPDATE agent_requests
+SET waiting_for_user = false,
+    pending_question = NULL,
+    question_deadline = NULL,
+    status_user = $2,
+    status_admin = $3,
+    public_phase = $4,
+    updated_at = now()
+WHERE id = $1
+            "#,
+        )
+        .bind(request.id)
+        .bind(USER_STATUS_PROCESSING)
+        .bind("analyzing")
+        .bind("analyzing")
+        .execute(&self.pool)
+        .await?;
+
+        self.append_agent_request_event_with_meta(
+            request.id,
+            "agent.question_answered",
+            Some(user_id),
+            None,
+            "已收到你的补充信息",
+            json!({
+                "question_id": question_id,
+                "selected_option": selected_option,
+                "text": text,
+            }),
+            "public",
+            "question",
+        )
+        .await?;
+
+        self.get_agent_request_detail_for_user(user_id, request_id).await
     }
 
     pub async fn enqueue_agent_missing_scan_job(&self) -> anyhow::Result<Job> {
@@ -557,6 +742,10 @@ ORDER BY created_at ASC
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    pub fn subscribe_agent_requests(&self) -> broadcast::Receiver<AgentRequestRealtimeEvent> {
+        self.agent_request_tx.subscribe()
+    }
+
     async fn append_agent_request_event(
         &self,
         request_id: Uuid,
@@ -566,10 +755,34 @@ ORDER BY created_at ASC
         summary: &str,
         detail: Value,
     ) -> anyhow::Result<()> {
+        self.append_agent_request_event_with_meta(
+            request_id,
+            event_type,
+            actor_user_id,
+            actor_username,
+            summary,
+            detail,
+            "public",
+            "timeline",
+        )
+        .await
+    }
+
+    async fn append_agent_request_event_with_meta(
+        &self,
+        request_id: Uuid,
+        event_type: &str,
+        actor_user_id: Option<Uuid>,
+        actor_username: Option<&str>,
+        summary: &str,
+        detail: Value,
+        visibility: &str,
+        channel: &str,
+    ) -> anyhow::Result<()> {
         sqlx::query(
             r#"
-INSERT INTO agent_request_events (id, request_id, event_type, actor_user_id, actor_username, summary, detail, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+INSERT INTO agent_request_events (id, request_id, event_type, actor_user_id, actor_username, summary, detail, visibility, channel, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
             "#,
         )
         .bind(Uuid::now_v7())
@@ -579,8 +792,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, now())
         .bind(actor_username.unwrap_or(""))
         .bind(summary)
         .bind(detail)
+        .bind(visibility)
+        .bind(channel)
         .execute(&self.pool)
         .await?;
+        self.publish_agent_request_realtime_event(request_id).await?;
         Ok(())
     }
 
@@ -602,6 +818,53 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, now())
         event_summary: &str,
         event_detail: Value,
     ) -> anyhow::Result<()> {
+        self
+            .update_request_state_with_event_meta(
+                request_id,
+                status_user,
+                status_admin,
+                agent_stage,
+                auto_handled,
+                admin_note,
+                agent_note,
+                provider_result,
+                last_error,
+                closed_at,
+                event_type,
+                actor_user_id,
+                actor_username,
+                event_summary,
+                event_detail,
+                "public",
+                "timeline",
+                None,
+                None,
+            )
+            .await
+    }
+
+    async fn update_request_state_with_event_meta(
+        &self,
+        request_id: Uuid,
+        status_user: &str,
+        status_admin: &str,
+        agent_stage: &str,
+        auto_handled: bool,
+        admin_note: &str,
+        agent_note: &str,
+        provider_result: &Value,
+        last_error: Option<&str>,
+        closed_at: Option<DateTime<Utc>>,
+        event_type: &str,
+        actor_user_id: Option<Uuid>,
+        actor_username: Option<&str>,
+        event_summary: &str,
+        event_detail: Value,
+        event_visibility: &str,
+        event_channel: &str,
+        public_phase: Option<&str>,
+        waiting_for_user: Option<bool>,
+    ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -616,7 +879,9 @@ SET status_user = $2,
     provider_result = $8,
     last_error = $9,
     updated_at = now(),
-    closed_at = $10
+    closed_at = $10,
+    public_phase = COALESCE($11, public_phase),
+    waiting_for_user = COALESCE($12, waiting_for_user)
 WHERE id = $1
             "#,
         )
@@ -630,14 +895,16 @@ WHERE id = $1
         .bind(provider_result)
         .bind(last_error)
         .bind(closed_at)
+        .bind(public_phase)
+        .bind(waiting_for_user)
         .execute(&mut *tx)
         .await?;
 
         if !event_type.is_empty() {
             sqlx::query(
                 r#"
-INSERT INTO agent_request_events (id, request_id, event_type, actor_user_id, actor_username, summary, detail, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+INSERT INTO agent_request_events (id, request_id, event_type, actor_user_id, actor_username, summary, detail, visibility, channel, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
                 "#,
             )
             .bind(Uuid::now_v7())
@@ -647,11 +914,14 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, now())
             .bind(actor_username.unwrap_or(""))
             .bind(event_summary)
             .bind(event_detail)
+            .bind(event_visibility)
+            .bind(event_channel)
             .execute(&mut *tx)
             .await?;
         }
 
         tx.commit().await?;
+        self.publish_agent_request_realtime_event(request_id).await?;
         Ok(())
     }
 
@@ -669,7 +939,7 @@ SELECT id
 FROM agent_requests
 WHERE user_id = $1
   AND request_type = $2
-  AND status_admin IN ('new', 'analyzing', 'auto_processing', 'review_required', 'approved')
+  AND status_admin IN ('new', 'analyzing', 'auto_processing', 'review_required', 'approved', 'waiting_user')
   AND (
       ($3::bigint IS NOT NULL AND tmdb_id = $3)
       OR ($4::uuid IS NOT NULL AND media_item_id = $4)
@@ -688,6 +958,108 @@ LIMIT 1
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    async fn publish_agent_request_realtime_event(&self, request_id: Uuid) -> anyhow::Result<()> {
+        let Some(request) = self.get_agent_request(request_id).await? else {
+            return Ok(());
+        };
+        let latest_event = self
+            .list_agent_request_events(request_id)
+            .await?
+            .into_iter()
+            .rev()
+            .find(|event| event.visibility != "private");
+        let _ = self.agent_request_tx.send(AgentRequestRealtimeEvent {
+            request_id,
+            user_id: request.user_id,
+            status_user: request.status_user,
+            status_admin: request.status_admin,
+            public_phase: request.public_phase,
+            waiting_for_user: request.waiting_for_user,
+            current_round: request.current_round,
+            max_rounds: request.max_rounds,
+            updated_at: request.updated_at,
+            latest_event,
+        });
+        Ok(())
+    }
+
+    async fn persist_agent_runtime_snapshot(
+        &self,
+        request: &mut AgentRequest,
+        runtime_state: &AgentLoopRuntimeState,
+        public_state: &Value,
+        public_phase: &str,
+        waiting_for_user: bool,
+        pending_question: Option<&AgentPendingQuestion>,
+        question_deadline: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<()> {
+        request.public_state = public_state.clone();
+        request.public_phase = public_phase.to_string();
+        request.waiting_for_user = waiting_for_user;
+        request.pending_question = pending_question.cloned();
+
+        sqlx::query(
+            r#"
+UPDATE agent_requests
+SET runtime_state = $2,
+    public_state = $3,
+    public_phase = $4,
+    waiting_for_user = $5,
+    pending_question = $6,
+    question_deadline = $7,
+    current_round = $8,
+    max_rounds = $9,
+    updated_at = now()
+WHERE id = $1
+            "#,
+        )
+        .bind(request.id)
+        .bind(serde_json::to_value(runtime_state)?)
+        .bind(public_state)
+        .bind(public_phase)
+        .bind(waiting_for_user)
+        .bind(pending_question.map(serde_json::to_value).transpose()?)
+        .bind(question_deadline)
+        .bind(request.current_round)
+        .bind(request.max_rounds)
+        .execute(&self.pool)
+        .await?;
+        self.publish_agent_request_realtime_event(request.id).await?;
+        Ok(())
+    }
+
+    async fn clear_agent_waiting_state(&self, request_id: Uuid) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+UPDATE agent_requests
+SET waiting_for_user = false,
+    pending_question = NULL,
+    question_deadline = NULL,
+    updated_at = now()
+WHERE id = $1
+            "#,
+        )
+        .bind(request_id)
+        .execute(&self.pool)
+        .await?;
+        self.publish_agent_request_realtime_event(request_id).await?;
+        Ok(())
+    }
+
+    async fn load_agent_runtime_state(
+        &self,
+        request_id: Uuid,
+    ) -> anyhow::Result<AgentLoopRuntimeState> {
+        let raw = sqlx::query_scalar::<_, Value>(
+            "SELECT runtime_state FROM agent_requests WHERE id = $1 LIMIT 1",
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or_else(|| json!({}));
+        Ok(serde_json::from_value(raw).unwrap_or_default())
     }
 
     async fn resolve_library_hit(
@@ -994,89 +1366,15 @@ LIMIT 1
         Ok(())
     }
 
-    async fn search_moviepilot_for_request(
+    async fn run_agent_request_job(
         &self,
-        moviepilot: &mut ls_agent::MoviePilotClient,
-        request: &AgentRequest,
-        tmdb: Option<&AgentResolvedTmdbMetadata>,
-        filter: &ls_config::AgentMoviePilotFilterConfig,
-    ) -> AgentMoviePilotSearchOutcome {
-        let requested_year = tmdb
-            .and_then(|meta| agent_tmdb_year(&meta.details))
-            .or_else(|| {
-                agent_extract_year_hints(&request.content)
-                    .into_iter()
-                    .next()
-                    .map(|value| value.to_string())
-            });
-        let effective_media_type = agent_effective_media_type(&request.media_type, tmdb);
-        let mut outcome = AgentMoviePilotSearchOutcome {
-            requested_year,
-            ..Default::default()
-        };
-
-        let Some(tmdb_id) = request.tmdb_id.filter(|value| *value > 0) else {
-            outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                strategy: "tmdb_exact".to_string(),
-                query: request.title.clone(),
-                success: false,
-                result_count: 0,
-                error: Some("tmdb metadata missing".to_string()),
-            });
-            return outcome;
-        };
-
-        let sites = moviepilot.get_indexer_sites().await.unwrap_or_default();
-        let exact_query = agent_build_moviepilot_exact_query(
-            request,
-            tmdb,
-            effective_media_type,
-            outcome.requested_year.as_deref(),
-            sites,
-        );
-        let query_desc = agent_describe_moviepilot_exact_query(tmdb_id, &exact_query);
-        outcome.exact_query = Some(exact_query.clone());
-
-        match moviepilot.search_by_tmdb(tmdb_id, &exact_query).await {
-            Ok(response) => {
-                let contexts = decode_search_contexts(&response.data);
-                let result_count = contexts.len();
-                let error = if response.success {
-                    None
-                } else {
-                    response.message.clone().or_else(|| Some("moviepilot search failed".to_string()))
-                };
-                agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
-                outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                    strategy: "tmdb_exact".to_string(),
-                    query: query_desc,
-                    success: response.success,
-                    result_count,
-                    error,
-                });
-            }
-            Err(err) => {
-                outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                    strategy: "tmdb_exact".to_string(),
-                    query: query_desc,
-                    success: false,
-                    result_count: 0,
-                    error: Some(err.to_string()),
-                });
-            }
-        }
-
-        outcome.best = choose_best_result(
-            &outcome.contexts,
-            effective_media_type,
-            request.season_numbers.first().copied(),
-            outcome.requested_year.as_deref(),
-            filter,
-        );
-        outcome
+        job_id: Uuid,
+        payload: &Value,
+    ) -> anyhow::Result<Value> {
+        self.run_agent_request_loop_job(job_id, payload).await
     }
 
-    async fn run_agent_request_job(
+    async fn run_agent_request_loop_job(
         &self,
         job_id: Uuid,
         payload: &Value,
@@ -1091,53 +1389,25 @@ LIMIT 1
         let Some(mut request) = self.get_agent_request(request_id).await? else {
             anyhow::bail!("agent request not found");
         };
-
         let cfg = self.config_snapshot().agent;
-        let raw_text = agent_request_raw_text(&request);
-        let mut intent = agent_heuristic_intent_analysis(&request);
-
-        if cfg.llm.enabled && !raw_text.trim().is_empty() {
-            self.set_job_progress(job_id, "llm_parse", 1, 0, "正在进行 LLM 语义解析", json!({}))
-                .await?;
-            if let Ok(llm) = LlmProvider::new(&cfg.llm) {
-                if llm.is_configured() {
-                    match llm.parse_intent(&raw_text).await {
-                        Ok(parsed) => {
-                            agent_apply_llm_parse_result(&mut intent, &parsed);
-                            self.append_agent_request_event(
-                                request_id,
-                                "agent.llm_parsed",
-                                None,
-                                Some("system"),
-                                "已通过 LLM tool calling 完成意图识别",
-                                json!(parsed),
-                            )
-                            .await?;
-                        }
-                        Err(err) => {
-                            self.append_agent_request_event(
-                                request_id,
-                                "agent.llm_parse_failed",
-                                None,
-                                Some("system"),
-                                "LLM 意图识别失败，已回退启发式解析",
-                                json!({ "error": err.to_string() }),
-                            )
-                            .await?;
-                        }
-                    }
-                }
-            }
+        request.max_rounds = request.max_rounds.max(1).min(20);
+        if request.max_rounds == 10 && cfg.max_rounds > 0 {
+            request.max_rounds = cfg.max_rounds.clamp(1, 20);
         }
 
-        self.persist_agent_intent_analysis(&mut request, &intent).await?;
+        let mut runtime_state = self.load_agent_runtime_state(request_id).await?;
+        let intent = self
+            .resolve_agent_intent_for_loop(job_id, &mut request, &mut runtime_state)
+            .await?;
 
-        if !intent.requires_media_search && !agent_request_type_supports_media_search(&request.request_type) {
+        if !intent.requires_media_search
+            && !agent_request_type_supports_media_search(&request.request_type)
+        {
             let result = json!({
                 "recognized_intent": intent,
                 "reason": "non_media_feedback",
             });
-            self.update_request_state_with_event(
+            self.update_request_state_with_event_meta(
                 request_id,
                 USER_STATUS_ACTION_REQUIRED,
                 "review_required",
@@ -1153,80 +1423,64 @@ LIMIT 1
                 Some("system"),
                 "该请求无需媒体搜索，已转人工反馈处理",
                 result.clone(),
+                "public",
+                "timeline",
+                Some("manual_review"),
+                Some(false),
             )
             .await?;
             return Ok(result);
         }
 
-        let tmdb_metadata = if agent_request_type_supports_media_search(&request.request_type) {
-            self.set_job_progress(job_id, "tmdb", 1, 0, "正在匹配 TMDB 元数据", json!({}))
-                .await?;
-            let resolved = self.resolve_agent_tmdb_metadata(&request).await?;
-            if let Some(tmdb) = resolved.as_ref() {
-                self.persist_agent_tmdb_resolution(&mut request, tmdb).await?;
-            }
-            resolved
-        } else {
-            None
-        };
-
-        if agent_request_type_supports_media_search(&request.request_type)
-            && request.tmdb_id.unwrap_or_default() <= 0
-        {
-            let result = json!({
-                "error": "tmdb metadata not resolved",
-                "title": request.title,
-                "media_type": request.media_type,
-                "recognized_intent": intent,
-            });
-            self.update_request_state_with_event(
-                request_id,
-                USER_STATUS_ACTION_REQUIRED,
-                "review_required",
-                "metadata_enrich",
-                false,
-                &request.admin_note,
-                "未能匹配 TMDB 元数据，已转人工处理",
-                &result,
-                Some("tmdb metadata not resolved"),
-                None,
-                "agent.tmdb_resolve_failed",
-                None,
-                Some("system"),
-                "TMDB 元数据匹配失败",
-                result.clone(),
-            )
-            .await?;
-            return Ok(result);
-        }
-
-        let workflow_kind = infer_workflow_kind(&request.request_type);
-        let required_capabilities = workflow_required_capabilities(&workflow_kind)
-            .into_iter()
-            .map(|cap| cap.as_str().to_string())
-            .collect::<Vec<_>>();
-
-        self.update_request_state_with_event(
-            request_id,
-            USER_STATUS_PROCESSING,
+        let public_state = json!({
+            "phase": "analyzing",
+            "message": "Agent 正在分析需求并准备工具链。",
+        });
+        self.persist_agent_runtime_snapshot(
+            &mut request,
+            &runtime_state,
+            &public_state,
             "analyzing",
-            "library_check",
-            request.auto_handled,
-            &request.admin_note,
-            &request.agent_note,
-            &request.provider_result,
+            false,
             None,
             None,
-            "agent.workflow.planned",
-            None,
-            Some("system"),
-            "已生成工作流执行计划",
-            json!({
-                "workflow_kind": workflow_kind.as_str(),
-                "required_capabilities": required_capabilities,
-            }),
         )
         .await?;
+
+        if request.waiting_for_user {
+            if let Some(deadline) = request
+                .pending_question
+                .as_ref()
+                .and_then(|question| question.deadline_at)
+                && deadline < Utc::now()
+            {
+                let result = json!({ "reason": "user_reply_timeout" });
+                self.update_request_state_with_event_meta(
+                    request_id,
+                    USER_STATUS_ACTION_REQUIRED,
+                    "review_required",
+                    "manual_review",
+                    false,
+                    &request.admin_note,
+                    "等待用户回复超时，已转人工处理",
+                    &result,
+                    Some("user reply timeout"),
+                    None,
+                    "agent.question_timeout",
+                    None,
+                    Some("system"),
+                    "等待用户补充信息超时",
+                    result.clone(),
+                    "public",
+                    "question",
+                    Some("manual_review"),
+                    Some(false),
+                )
+                .await?;
+                return Ok(result);
+            }
+            return Ok(json!({ "paused": true, "reason": "waiting_for_user" }));
+        }
 
         if let Some((media_item_id, media_name)) = self.resolve_library_hit(&request).await? {
             if agent_should_bypass_library_hit(&request.request_type) {
@@ -1243,13 +1497,13 @@ LIMIT 1
                     }),
                 )
                 .await?;
-            } else {
+            } else if cfg.auto_close_on_library_hit {
                 let result = json!({
                     "matched_media_item_id": media_item_id,
                     "matched_media_name": media_name,
                     "reason": "library_hit",
                 });
-                self.update_request_state_with_event(
+                self.update_request_state_with_event_meta(
                     request_id,
                     "success",
                     "completed",
@@ -1265,243 +1519,793 @@ LIMIT 1
                     Some("system"),
                     "已命中库内媒体，自动完成",
                     result.clone(),
+                    "public",
+                    "timeline",
+                    Some("completed"),
+                    Some(false),
                 )
                 .await?;
-                if let Some(user_id) = request.user_id {
-                    let _ = self
-                        .create_notification(
-                            user_id,
-                            "请求已完成",
-                            "系统检测到目标媒体已在库内，可直接观看。",
-                            "agent_request",
-                            json!({ "request_id": request_id, "media_item_id": media_item_id }),
-                        )
-                        .await;
-                }
                 return Ok(result);
             }
         }
 
-        if matches!(request.request_type.as_str(), "missing_episode" | "missing_season")
-            && let Some(series_id) = request.series_id
-        {
-            let gaps = self.detect_series_gaps(series_id).await?;
-            if gaps.is_empty() {
-                let result = json!({ "reason": "series_is_complete" });
-                self.update_request_state_with_event(
+        loop {
+            if request.current_round >= request.max_rounds {
+                let result = json!({ "reason": "max_rounds_reached" });
+                self.update_request_state_with_event_meta(
                     request_id,
-                    "success",
-                    "completed",
-                    "verify",
-                    true,
+                    USER_STATUS_ACTION_REQUIRED,
+                    "review_required",
+                    "manual_review",
+                    false,
                     &request.admin_note,
-                    "当前库内季集已完整，自动关闭工单",
+                    "达到最大轮次，转人工处理",
                     &result,
+                    Some("max rounds reached"),
                     None,
-                    Some(Utc::now()),
-                    "agent.series_complete",
+                    "agent.max_rounds_reached",
                     None,
                     Some("system"),
-                    "剧集当前已完整",
+                    "自动处理达到最大轮次，已转人工处理",
                     result.clone(),
+                    "public",
+                    "timeline",
+                    Some("manual_review"),
+                    Some(false),
                 )
                 .await?;
                 return Ok(result);
             }
+
+            request.current_round += 1;
+            let current_round = request.current_round;
+            let max_rounds = request.max_rounds;
+            self.persist_agent_runtime_snapshot(
+                &mut request,
+                &runtime_state,
+                &json!({
+                    "phase": "analyzing",
+                    "message": format!("Agent 正在执行第 {} / {} 轮决策。", current_round, max_rounds),
+                }),
+                "analyzing",
+                false,
+                None,
+                None,
+            )
+            .await?;
+
+            let action = self
+                .decide_agent_loop_action(&request, &runtime_state)
+                .await?;
+            self.append_agent_request_event_with_meta(
+                request_id,
+                "agent.loop_action_decided",
+                None,
+                Some("system"),
+                "Agent 已选择下一轮动作",
+                json!(action.clone()),
+                "private",
+                "tool",
+            )
+            .await?;
+
+            if let Some(result) = self
+                .execute_agent_loop_action(job_id, &mut request, &mut runtime_state, &action)
+                .await?
+            {
+                return Ok(result);
+            }
+
+            if request.waiting_for_user {
+                return Ok(json!({ "paused": true, "reason": "waiting_for_user" }));
+            }
+        }
+    }
+
+    async fn resolve_agent_intent_for_loop(
+        &self,
+        job_id: Uuid,
+        request: &mut AgentRequest,
+        runtime_state: &mut AgentLoopRuntimeState,
+    ) -> anyhow::Result<AgentIntentAnalysis> {
+        if let Some(intent) = runtime_state.intent.clone() {
+            return Ok(intent);
         }
 
         let cfg = self.config_snapshot().agent;
-        let provider_statuses = self.list_agent_provider_statuses().await?;
-        let available_capabilities = provider_statuses
-            .iter()
-            .filter(|provider| provider.enabled && provider.configured && provider.healthy)
-            .flat_map(|provider| provider.capabilities.iter().cloned())
-            .collect::<HashSet<_>>();
-        let missing_capabilities = workflow_required_capabilities(&workflow_kind)
-            .into_iter()
-            .map(|cap| cap.as_str().to_string())
-            .filter(|cap| !available_capabilities.contains(cap))
-            .collect::<Vec<_>>();
-        if !missing_capabilities.is_empty() {
-            let result = json!({ "reason": "moviepilot_not_configured" });
-            self.update_request_state_with_event(
-                request_id,
-                USER_STATUS_ACTION_REQUIRED,
-                "review_required",
-                "manual_review",
-                false,
-                &request.admin_note,
-                "工作流依赖的 Provider 能力不可用，已转人工处理",
-                &result,
-                Some("required capabilities unavailable"),
-                None,
-                "agent.review_required",
-                None,
-                Some("system"),
-                "关键 Provider 能力不可用，已转人工处理",
-                json!({
-                    "provider_statuses": provider_statuses,
-                    "missing_capabilities": missing_capabilities,
-                }),
-            )
-            .await?;
-            return Ok(result);
+        let raw_text = agent_request_raw_text(request);
+        let mut intent = agent_heuristic_intent_analysis(request);
+
+        if cfg.llm.enabled && !raw_text.trim().is_empty() {
+            self.set_job_progress(job_id, "llm_parse", 1, 0, "正在进行 LLM 语义解析", json!({}))
+                .await?;
+            if let Ok(llm) = LlmProvider::new(&cfg.llm)
+                && llm.is_configured()
+            {
+                match llm.parse_intent(&raw_text).await {
+                    Ok(parsed) => {
+                        agent_apply_llm_parse_result(&mut intent, &parsed);
+                        self.append_agent_request_event_with_meta(
+                            request.id,
+                            "agent.llm_parsed",
+                            None,
+                            Some("system"),
+                            "已通过 LLM tool calling 完成意图识别",
+                            json!(parsed),
+                            "private",
+                            "tool",
+                        )
+                        .await?;
+                    }
+                    Err(err) => {
+                        self.append_agent_request_event_with_meta(
+                            request.id,
+                            "agent.llm_parse_failed",
+                            None,
+                            Some("system"),
+                            "LLM 意图识别失败，已回退启发式解析",
+                            json!({ "error": err.to_string() }),
+                            "private",
+                            "tool",
+                        )
+                        .await?;
+                    }
+                }
+            }
         }
 
-        self.set_job_progress(job_id, "moviepilot", 1, 0, "正在搜索资源", json!({}))
-            .await?;
-        let mut moviepilot = MoviePilotProvider::from_config(&cfg.moviepilot)?.into_client();
-        let search_outcome = self
-            .search_moviepilot_for_request(
-                &mut moviepilot,
-                &request,
-                tmdb_metadata.as_ref(),
-                &cfg.moviepilot.filter,
-            )
-            .await;
-        let contexts = search_outcome.contexts.clone();
-        let season = request.season_numbers.first().copied();
-        let effective_media_type = agent_effective_media_type(&request.media_type, tmdb_metadata.as_ref());
-        let best = search_outcome.best.clone();
-        let (preferred_sources, avoid_sources, constraints) =
-            agent_detect_source_preferences(&agent_request_raw_text(&request));
-        let mut result_payload = json!({
-            "recognized_intent": {
-                "request_type": request.request_type,
-                "title": request.title,
-                "media_type": request.media_type,
-                "season_numbers": request.season_numbers,
-                "episode_numbers": request.episode_numbers,
-                "raw_text": agent_request_raw_text(&request),
-                "preferred_sources": preferred_sources,
-                "avoid_sources": avoid_sources,
-                "constraints": constraints,
-            },
-            "search_success": !contexts.is_empty(),
-            "search_message": if contexts.is_empty() { agent_last_search_error(Some(&json!(search_outcome.attempts.clone()))) } else { None::<String> },
-            "result_count": contexts.len(),
-            "search_attempts": search_outcome.attempts,
-            "requested_year": search_outcome.requested_year,
-            "resolved_tmdb_id": tmdb_metadata.as_ref().map(|value| value.tmdb_id),
-            "resolved_media_type": effective_media_type,
-            "exact_query": search_outcome.exact_query.as_ref().map(|query| json!({
-                "mtype": query.media_type,
-                "area": query.area,
-                "title": query.title,
-                "year": query.year,
-                "season": query.season,
-                "sites": query.sites,
-            })),
-        });
+        self.persist_agent_intent_analysis(request, &intent).await?;
+        runtime_state.intent = Some(intent.clone());
+        self.persist_agent_runtime_snapshot(
+            request,
+            runtime_state,
+            &json!({
+                "phase": "analyzing",
+                "message": "已识别需求并准备选择工具。",
+                "request_type": intent.effective_request_type,
+                "media_type": intent.media_type,
+                "title": intent.title,
+            }),
+            "analyzing",
+            false,
+            None,
+            None,
+        )
+        .await?;
+        Ok(intent)
+    }
 
-        let mut execution_plan = if cfg.llm.enabled {
+    async fn decide_agent_loop_action(
+        &self,
+        request: &AgentRequest,
+        runtime_state: &AgentLoopRuntimeState,
+    ) -> anyhow::Result<LlmAgentLoopAction> {
+        let context = agent_build_loop_context(request, runtime_state);
+        let cfg = self.config_snapshot().agent;
+
+        let mut action = if cfg.llm.enabled {
             if let Ok(llm) = LlmProvider::new(&cfg.llm) {
                 if llm.is_configured() {
-                    let context_payload =
-                        agent_build_execution_context(&request, tmdb_metadata.as_ref(), &contexts);
-                    match llm.plan_request_execution(&context_payload).await {
-                        Ok(plan) => {
-                            let plan = agent_sanitize_execution_plan(plan, contexts.len());
-                            let _ = self
-                                .append_agent_request_event(
-                                    request_id,
-                                    "agent.llm_planned",
-                                    None,
-                                    Some("system"),
-                                    "Agent 已完成执行决策",
-                                    json!(plan.clone()),
-                                )
-                                .await;
-                            plan
-                        }
-                        Err(err) => {
-                            result_payload["llm_plan_error"] = json!(err.to_string());
-                            agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
-                        }
+                    match llm.decide_loop_action(&context).await {
+                        Ok(action) => action,
+                        Err(_) => agent_fallback_loop_action(request, runtime_state),
                     }
                 } else {
-                    agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+                    agent_fallback_loop_action(request, runtime_state)
                 }
             } else {
-                agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+                agent_fallback_loop_action(request, runtime_state)
             }
         } else {
-            agent_fallback_execution_plan(&request, tmdb_metadata.as_ref(), &contexts)
+            agent_fallback_loop_action(request, runtime_state)
         };
-        execution_plan = agent_sanitize_execution_plan(execution_plan, contexts.len());
-        result_payload["agent_plan"] = json!({
-            "action": execution_plan.action,
-            "selected_indices": execution_plan.selected_indices,
-            "add_subscription": execution_plan.add_subscription,
-            "reason": execution_plan.reason,
-            "subscription_reason": execution_plan.subscription_reason,
-            "reject_reason": execution_plan.reject_reason,
-        });
 
-        if execution_plan.action == "reject" {
-            let reject_reason = execution_plan
-                .reject_reason
-                .clone()
-                .unwrap_or_else(|| execution_plan.reason.clone());
-            self.update_request_state_with_event(
-                request_id,
-                "failed",
-                "rejected",
-                "manual_review",
-                true,
-                &request.admin_note,
-                &execution_plan.reason,
-                &result_payload,
-                Some(&reject_reason),
-                Some(Utc::now()),
-                "agent.auto_rejected",
-                None,
-                Some("system"),
-                "Agent 自动拒绝该请求",
-                result_payload.clone(),
-            )
-            .await?;
-            if let Some(user_id) = request.user_id {
-                let _ = self
-                    .create_notification(
-                        user_id,
-                        "请求未通过",
-                        &execution_plan.reason,
-                        "agent_request",
-                        json!({ "request_id": request_id }),
+        let year = agent_resolved_year(request, runtime_state);
+        let query = action
+            .query
+            .clone()
+            .unwrap_or_else(|| request.title.trim().to_string());
+        if action.action == "moviepilot_search" && year.is_none() {
+            action.action = "ask_user".to_string();
+            action.question_prompt = Some("请补充该影视作品的年份，便于精确匹配资源。".to_string());
+            action.question_helper_text =
+                Some("例如输入 2024；如果是剧集，也可以补充首播年份。".to_string());
+            action.question_context_brief = Some(query.clone());
+            action.question_options = year
+                .map(|value| vec![value.to_string()])
+                .unwrap_or_default();
+            action.allow_free_text = true;
+            action.reason = "moviepilot search requires year".to_string();
+        }
+        Ok(agent_sanitize_loop_action(action, request, runtime_state))
+    }
+
+    async fn execute_agent_loop_action(
+        &self,
+        job_id: Uuid,
+        request: &mut AgentRequest,
+        runtime_state: &mut AgentLoopRuntimeState,
+        action: &LlmAgentLoopAction,
+    ) -> anyhow::Result<Option<Value>> {
+        match action.action.as_str() {
+            "tmdb_search" => {
+                self.set_job_progress(job_id, "tmdb", 1, 0, "正在匹配 TMDB 元数据", json!({}))
+                    .await?;
+                let resolved = self.resolve_agent_tmdb_metadata(request).await?;
+                let payload = if let Some(tmdb) = resolved.as_ref() {
+                    self.persist_agent_tmdb_resolution(request, tmdb).await?;
+                    let summary = json!({
+                        "provider": "tmdb",
+                        "tmdb_id": tmdb.tmdb_id,
+                        "media_type": tmdb.kind,
+                        "title": agent_tmdb_primary_title(tmdb.kind, &tmdb.details),
+                        "year": agent_tmdb_year(&tmdb.details),
+                    });
+                    runtime_state.tmdb_metadata = Some(summary.clone());
+                    summary
+                } else {
+                    json!({
+                        "provider": "tmdb",
+                        "matched": false,
+                        "title": request.title,
+                    })
+                };
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": if resolved.is_some() { "已匹配 TMDB 元数据。" } else { "暂未匹配到 TMDB 元数据。" },
+                        "tmdb": payload,
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(None)
+            }
+            "tvdb_search" => {
+                let payload = self
+                    .search_tvdb_for_request(
+                        action.query.as_deref().unwrap_or(&request.title),
+                        agent_resolved_year(request, runtime_state),
+                        agent_effective_media_type(&request.media_type, None),
+                    )
+                    .await?;
+                runtime_state.tvdb_result = Some(payload.clone());
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.tvdb_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 TVDB 搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": "已完成 TVDB 元数据匹配。",
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(None)
+            }
+            "bangumi_search" => {
+                let payload = self
+                    .search_bangumi_for_request(
+                        action.query.as_deref().unwrap_or(&request.title),
+                        agent_resolved_year(request, runtime_state),
+                    )
+                    .await?;
+                runtime_state.bangumi_result = Some(payload.clone());
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.bangumi_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 Bangumi 搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": "已完成 Bangumi 元数据匹配。",
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(None)
+            }
+            "moviepilot_search" => {
+                self.set_job_progress(job_id, "moviepilot", 1, 0, "正在搜索资源", json!({}))
+                    .await?;
+                let Some(year) = agent_resolved_year(request, runtime_state) else {
+                    let question = AgentPendingQuestion {
+                        id: Uuid::now_v7().to_string(),
+                        prompt: "请补充该影视作品的年份，便于精确匹配资源。".to_string(),
+                        helper_text: Some("例如 2024。".to_string()),
+                        options: Vec::new(),
+                        allow_free_text: true,
+                        context_brief: Some(request.title.clone()),
+                        asked_at: Utc::now(),
+                        deadline_at: Some(
+                            Utc::now()
+                                + Duration::minutes(
+                                    self.config_snapshot().agent.question_timeout_minutes as i64,
+                                ),
+                        ),
+                    };
+                    self.persist_agent_runtime_snapshot(
+                        request,
+                        runtime_state,
+                        &json!({
+                            "phase": "awaiting_user",
+                            "message": question.prompt,
+                        }),
+                        "awaiting_user",
+                        true,
+                        Some(&question),
+                        question.deadline_at,
+                    )
+                    .await?;
+                    self.update_request_state_with_event_meta(
+                        request.id,
+                        USER_STATUS_ACTION_REQUIRED,
+                        "waiting_user",
+                        "manual_review",
+                        false,
+                        &request.admin_note,
+                        "等待用户补充信息",
+                        &request.provider_result,
+                        None,
+                        None,
+                        "agent.question_asked",
+                        None,
+                        Some("system"),
+                        "Agent 需要你补充信息后才能继续",
+                        json!({
+                            "question_id": question.id,
+                            "prompt": question.prompt,
+                            "allow_free_text": true,
+                            "deadline_at": question.deadline_at,
+                        }),
+                        "public",
+                        "question",
+                        Some("awaiting_user"),
+                        Some(true),
+                    )
+                    .await?;
+                    return Ok(Some(json!({ "paused": true, "question_id": question.id })));
+                };
+                let mut moviepilot =
+                    MoviePilotProvider::from_config(&self.config_snapshot().agent.moviepilot)?
+                        .into_client();
+                let tmdb = request
+                    .tmdb_id
+                    .filter(|value| *value > 0)
+                    .and_then(|tmdb_id| runtime_state.tmdb_metadata.as_ref().map(|_| tmdb_id))
+                    .map(|tmdb_id| AgentResolvedTmdbMetadata {
+                        kind: if request.media_type.eq_ignore_ascii_case("movie") {
+                            "movie"
+                        } else {
+                            "tv"
+                        },
+                        tmdb_id,
+                        details: json!({}),
+                        release_dates: None,
+                        watch_providers: None,
+                    });
+                let outcome = self
+                    .search_moviepilot_aggregated_for_request(
+                        &mut moviepilot,
+                        request,
+                        tmdb.as_ref(),
+                        &self.config_snapshot().agent.moviepilot.filter,
+                        Some(year),
                     )
                     .await;
+                runtime_state.moviepilot_contexts = outcome.contexts.clone();
+                runtime_state.moviepilot_result = Some(json!({
+                    "result_count": outcome.contexts.len(),
+                    "requested_year": year,
+                    "attempts": outcome.attempts,
+                    "best": outcome.best.as_ref().map(summarize_moviepilot_result),
+                }));
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.moviepilot_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 MoviePilot 聚合搜索",
+                    runtime_state.moviepilot_result.clone().unwrap_or_else(|| json!({})),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "searching",
+                        "message": if outcome.contexts.is_empty() { "未匹配到可用资源。" } else { "已匹配到候选资源，Agent 正在做最终决策。" },
+                        "result_count": outcome.contexts.len(),
+                    }),
+                    "searching",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(None)
             }
-            return Ok(result_payload);
+            "ask_user" => {
+                let question = AgentPendingQuestion {
+                    id: Uuid::now_v7().to_string(),
+                    prompt: action
+                        .question_prompt
+                        .clone()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "还需要你补充一些信息。".to_string()),
+                    helper_text: action.question_helper_text.clone(),
+                    options: action
+                        .question_options
+                        .iter()
+                        .map(|option| AgentQuestionOption {
+                            value: option.clone(),
+                            label: option.clone(),
+                        })
+                        .collect(),
+                    allow_free_text: action.allow_free_text,
+                    context_brief: action.question_context_brief.clone(),
+                    asked_at: Utc::now(),
+                    deadline_at: Some(
+                        Utc::now()
+                            + Duration::minutes(
+                                self.config_snapshot().agent.question_timeout_minutes as i64,
+                            ),
+                    ),
+                };
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "awaiting_user",
+                        "message": question.prompt,
+                    }),
+                    "awaiting_user",
+                    true,
+                    Some(&question),
+                    question.deadline_at,
+                )
+                .await?;
+                self.update_request_state_with_event_meta(
+                    request.id,
+                    USER_STATUS_ACTION_REQUIRED,
+                    "waiting_user",
+                    "manual_review",
+                    false,
+                    &request.admin_note,
+                    "等待用户补充信息",
+                    &request.provider_result,
+                    None,
+                    None,
+                    "agent.question_asked",
+                    None,
+                    Some("system"),
+                    "Agent 需要你补充信息后才能继续",
+                    json!({
+                        "question_id": question.id,
+                        "prompt": question.prompt,
+                        "options": question.options,
+                        "allow_free_text": question.allow_free_text,
+                        "deadline_at": question.deadline_at,
+                    }),
+                    "public",
+                    "question",
+                    Some("awaiting_user"),
+                    Some(true),
+                )
+                .await?;
+                Ok(Some(json!({ "paused": true, "question_id": question.id })))
+            }
+            "complete_download" | "complete_subscription" | "complete_download_and_subscription" => {
+                let result = self
+                    .complete_agent_loop_request(request, runtime_state, action)
+                    .await?;
+                Ok(Some(result))
+            }
+            "fail_request" => {
+                let result = json!({ "reason": action.reason });
+                self.update_request_state_with_event_meta(
+                    request.id,
+                    "failed",
+                    "failed",
+                    "closed",
+                    true,
+                    &request.admin_note,
+                    &action.reason,
+                    &result,
+                    Some(&action.reason),
+                    Some(Utc::now()),
+                    "agent.failed",
+                    None,
+                    Some("system"),
+                    "Agent 结束了当前请求",
+                    result.clone(),
+                    "public",
+                    "timeline",
+                    Some("failed"),
+                    Some(false),
+                )
+                .await?;
+                Ok(Some(result))
+            }
+            _ => {
+                let result = json!({ "reason": action.reason });
+                self.update_request_state_with_event_meta(
+                    request.id,
+                    USER_STATUS_ACTION_REQUIRED,
+                    "review_required",
+                    "manual_review",
+                    false,
+                    &request.admin_note,
+                    &action.reason,
+                    &result,
+                    Some(&action.reason),
+                    None,
+                    "agent.review_required",
+                    None,
+                    Some("system"),
+                    "Agent 已转人工处理",
+                    result.clone(),
+                    "public",
+                    "timeline",
+                    Some("manual_review"),
+                    Some(false),
+                )
+                .await?;
+                Ok(Some(result))
+            }
+        }
+    }
+
+    async fn search_tvdb_for_request(
+        &self,
+        query: &str,
+        year: Option<i32>,
+        media_type: &str,
+    ) -> anyhow::Result<Value> {
+        let cfg = self.config_snapshot();
+        if !cfg.scraper.tvdb.enabled || cfg.scraper.tvdb.api_key.trim().is_empty() {
+            return Ok(json!({ "provider": "tvdb", "configured": false }));
+        }
+        let provider_config = ls_scraper::TvdbConfig {
+            enabled: cfg.scraper.tvdb.enabled,
+            base_url: cfg.scraper.tvdb.base_url.clone(),
+            api_key: cfg.scraper.tvdb.api_key.clone(),
+            pin: cfg.scraper.tvdb.pin.clone(),
+            timeout_seconds: cfg.scraper.tvdb.timeout_seconds,
+        };
+        let client = TvdbClient::new(&self.http_client, &provider_config);
+        let payload = if media_type.eq_ignore_ascii_case("movie") {
+            client.scrape_movie_by_title(query, year).await?
+        } else {
+            client.scrape_series_by_title(query, year).await?
+        };
+        Ok(match payload {
+            Some(result) => json!({
+                "provider": "tvdb",
+                "matched": true,
+                "title": result.title,
+                "original_title": result.original_title,
+                "production_year": result.production_year,
+                "tvdb_id": result.external_ids.tvdb,
+                "tmdb_id": result.external_ids.tmdb,
+                "raw_id": result.item_id,
+            }),
+            None => json!({
+                "provider": "tvdb",
+                "matched": false,
+                "query": query,
+                "year": year,
+            }),
+        })
+    }
+
+    async fn search_bangumi_for_request(
+        &self,
+        query: &str,
+        year: Option<i32>,
+    ) -> anyhow::Result<Value> {
+        let cfg = self.config_snapshot();
+        if !cfg.scraper.bangumi.enabled || cfg.scraper.bangumi.access_token.trim().is_empty() {
+            return Ok(json!({ "provider": "bangumi", "configured": false }));
+        }
+        let provider_config = ls_scraper::BangumiConfig {
+            enabled: cfg.scraper.bangumi.enabled,
+            base_url: cfg.scraper.bangumi.base_url.clone(),
+            access_token: cfg.scraper.bangumi.access_token.clone(),
+            timeout_seconds: cfg.scraper.bangumi.timeout_seconds,
+            user_agent: cfg.scraper.bangumi.user_agent.clone(),
+        };
+        let client = BangumiClient::new(&self.http_client, &provider_config);
+        let payload = client.scrape_series_by_title(query, year).await?;
+        Ok(match payload {
+            Some(result) => json!({
+                "provider": "bangumi",
+                "matched": true,
+                "title": result.title,
+                "original_title": result.original_title,
+                "production_year": result.production_year,
+                "bangumi_id": result.external_ids.bangumi,
+                "tmdb_id": result.external_ids.tmdb,
+                "tvdb_id": result.external_ids.tvdb,
+            }),
+            None => json!({
+                "provider": "bangumi",
+                "matched": false,
+                "query": query,
+                "year": year,
+            }),
+        })
+    }
+
+    async fn search_moviepilot_aggregated_for_request(
+        &self,
+        moviepilot: &mut ls_agent::MoviePilotClient,
+        request: &AgentRequest,
+        tmdb: Option<&AgentResolvedTmdbMetadata>,
+        filter: &ls_config::AgentMoviePilotFilterConfig,
+        forced_year: Option<i32>,
+    ) -> AgentMoviePilotSearchOutcome {
+        let mut outcome = AgentMoviePilotSearchOutcome::default();
+        let effective_media_type = agent_effective_media_type(&request.media_type, tmdb);
+        let year = forced_year
+            .map(|value| value.to_string())
+            .or_else(|| agent_resolved_year_from_tmdb(tmdb).map(|value| value.to_string()))
+            .or_else(|| agent_extract_year_hints(&agent_request_raw_text(request)).into_iter().next().map(|value| value.to_string()));
+        outcome.requested_year = year.clone();
+        let season = request.season_numbers.first().copied();
+        let sites = moviepilot.get_indexer_sites().await.unwrap_or_default();
+
+        if let Some(tmdb_id) = request.tmdb_id.filter(|value| *value > 0) {
+            let exact_query = agent_build_moviepilot_exact_query(
+                request,
+                tmdb,
+                effective_media_type,
+                year.as_deref(),
+                sites.clone(),
+            );
+            outcome.exact_query = Some(exact_query.clone());
+            match moviepilot.search_by_tmdb(tmdb_id, &exact_query).await {
+                Ok(response) => {
+                    let contexts = decode_search_contexts(&response.data);
+                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                        strategy: "tmdb_exact".to_string(),
+                        query: agent_describe_moviepilot_exact_query(tmdb_id, &exact_query),
+                        success: response.success,
+                        result_count: contexts.len(),
+                        error: response.message.clone(),
+                    });
+                    agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
+                }
+                Err(err) => {
+                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                        strategy: "tmdb_exact".to_string(),
+                        query: agent_describe_moviepilot_exact_query(tmdb_id, &exact_query),
+                        success: false,
+                        result_count: 0,
+                        error: Some(err.to_string()),
+                    });
+                }
+            }
         }
 
-        let mut selected_contexts = execution_plan
+        match moviepilot.search_by_title(&request.title).await {
+            Ok(response) => {
+                let contexts = decode_search_contexts(&response.data);
+                outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                    strategy: "title_aggregate".to_string(),
+                    query: request.title.clone(),
+                    success: response.success,
+                    result_count: contexts.len(),
+                    error: response.message.clone(),
+                });
+                agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
+            }
+            Err(err) => {
+                outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                    strategy: "title_aggregate".to_string(),
+                    query: request.title.clone(),
+                    success: false,
+                    result_count: 0,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+
+        outcome.contexts = agent_filter_moviepilot_contexts(
+            &outcome.contexts,
+            effective_media_type,
+            season,
+            year.as_deref(),
+        );
+        outcome.best = choose_best_result(
+            &outcome.contexts,
+            effective_media_type,
+            season,
+            year.as_deref(),
+            filter,
+        );
+        outcome
+    }
+
+    async fn complete_agent_loop_request(
+        &self,
+        request: &mut AgentRequest,
+        runtime_state: &mut AgentLoopRuntimeState,
+        action: &LlmAgentLoopAction,
+    ) -> anyhow::Result<Value> {
+        let cfg = self.config_snapshot().agent;
+        let tmdb_metadata = request
+            .tmdb_id
+            .filter(|value| *value > 0)
+            .and_then(|tmdb_id| {
+                runtime_state.tmdb_metadata.as_ref().map(|_| AgentResolvedTmdbMetadata {
+                    kind: if request.media_type.eq_ignore_ascii_case("movie") {
+                        "movie"
+                    } else {
+                        "tv"
+                    },
+                    tmdb_id,
+                    details: json!({}),
+                    release_dates: None,
+                    watch_providers: None,
+                })
+            });
+        let contexts = runtime_state.moviepilot_contexts.clone();
+        let mut selected = action
             .selected_indices
             .iter()
             .filter_map(|index| contexts.get(*index).cloned().map(|context| (*index, context)))
             .collect::<Vec<_>>();
-
-        if execution_plan.action == "download"
-            || execution_plan.action == "download_and_subscribe"
-        {
-            if selected_contexts.is_empty() && !contexts.is_empty() && let Some(best) = best.as_ref() {
-                selected_contexts.push((0, best.clone()));
-            }
+        if selected.is_empty() && let Some(first) = contexts.first() {
+            selected.push((0, first.clone()));
         }
 
+        let mut moviepilot = MoviePilotProvider::from_config(&cfg.moviepilot)?.into_client();
+        let effective_media_type = agent_effective_media_type(&request.media_type, tmdb_metadata.as_ref());
+        let season = request.season_numbers.first().copied();
         let mut download_results = Vec::new();
         let mut download_successes = 0usize;
-        if !selected_contexts.is_empty() && cfg.moviepilot.search_download_enabled {
-            for (index, context) in &selected_contexts {
-                let download_payload = build_download_payload_with_context(
+        if matches!(action.action.as_str(), "complete_download" | "complete_download_and_subscription")
+            && cfg.moviepilot.search_download_enabled
+        {
+            for (index, context) in &selected {
+                let payload = build_download_payload_with_context(
                     context,
-                    Some(agent_build_moviepilot_media_info(
-                        &request,
-                        tmdb_metadata.as_ref(),
-                        context,
-                    )),
+                    Some(agent_build_moviepilot_media_info(request, tmdb_metadata.as_ref(), context)),
                 );
-                match moviepilot.submit_download(&download_payload).await {
+                match moviepilot.submit_download(&payload).await {
                     Ok(response) => {
                         if response.success {
                             download_successes += 1;
@@ -1523,110 +2327,94 @@ LIMIT 1
                     }
                 }
             }
-            result_payload["selected_results"] = json!(download_results);
         }
 
-        let need_subscription = execution_plan.add_subscription
-            || execution_plan.action == "subscribe"
-            || execution_plan.action == "download_and_subscribe";
         let mut subscription_success = false;
-        if need_subscription && cfg.moviepilot.subscribe_fallback_enabled {
+        if matches!(
+            action.action.as_str(),
+            "complete_subscription" | "complete_download_and_subscription"
+        ) && cfg.moviepilot.subscribe_fallback_enabled
+        {
             let subscription = build_subscription_payload(
                 &request.title,
                 effective_media_type,
                 request.tmdb_id,
                 season,
                 &request.content,
-                selected_contexts.first().map(|(_, context)| context).or(best.as_ref()),
+                selected.first().map(|(_, context)| context),
             );
             match moviepilot.create_subscription(&subscription).await {
                 Ok(response) => {
                     subscription_success = response.success;
-                    result_payload["subscription"] = json!({
-                        "success": response.success,
-                        "message": response.message,
-                    });
                 }
                 Err(err) => {
-                    result_payload["subscription_error"] = json!(err.to_string());
+                    runtime_state.latest_reason = Some(err.to_string());
                 }
             }
         }
 
+        let result = json!({
+            "selected_results": download_results,
+            "download_successes": download_successes,
+            "subscription_success": subscription_success,
+            "action": action.action,
+            "reason": action.reason,
+        });
+
         if download_successes > 0 || subscription_success {
-            let event_type = if need_subscription {
-                "agent.moviepilot.subscription_created"
-            } else {
-                "agent.moviepilot.download_submitted"
+            let summary = match action.action.as_str() {
+                "complete_download_and_subscription" => "已提交下载并创建订阅",
+                "complete_subscription" => "已创建订阅",
+                _ => "已提交下载任务",
             };
-            let stage = if need_subscription { "mp_subscribe" } else { "mp_download" };
-            let summary = if need_subscription && download_successes > 0 {
-                "已提交下载并创建订阅"
-            } else if need_subscription {
-                "已创建订阅"
-            } else {
-                "已提交下载任务"
-            };
-            self.update_request_state_with_event(
-                request_id,
+            self.update_request_state_with_event_meta(
+                request.id,
                 "success",
                 "completed",
-                stage,
+                "notify",
                 true,
                 &request.admin_note,
-                &execution_plan.reason,
-                &result_payload,
+                &action.reason,
+                &result,
                 None,
                 Some(Utc::now()),
-                event_type,
+                "agent.completed",
                 None,
                 Some("system"),
                 summary,
-                result_payload.clone(),
+                result.clone(),
+                "public",
+                "timeline",
+                Some("completed"),
+                Some(false),
             )
             .await?;
-            if let Some(user_id) = request.user_id {
-                let message = if need_subscription && download_successes > 0 {
-                    "Agent 已提交下载任务，并为后续更新创建订阅。"
-                } else if need_subscription {
-                    "Agent 已为该请求创建订阅，后续命中资源时会自动处理。"
-                } else {
-                    "Agent 已为该请求提交下载任务。"
-                };
-                let _ = self
-                    .create_notification(
-                        user_id,
-                        "请求已处理",
-                        message,
-                        "agent_request",
-                        json!({ "request_id": request_id }),
-                    )
-                    .await;
-            }
-            return Ok(result_payload);
+            return Ok(result);
         }
 
-        let review_reason = agent_last_search_error(result_payload.get("search_attempts"))
-            .unwrap_or_else(|| execution_plan.reason.clone());
-        self.update_request_state_with_event(
-            request_id,
+        self.update_request_state_with_event_meta(
+            request.id,
             USER_STATUS_ACTION_REQUIRED,
             "review_required",
             "manual_review",
             false,
             &request.admin_note,
-            "未找到可自动处理的结果，已转人工处理",
-            &result_payload,
-            Some(&review_reason),
+            "自动终结动作未成功，转人工处理",
+            &result,
+            Some("agent completion failed"),
             None,
             "agent.review_required",
             None,
             Some("system"),
-            "未找到可自动处理结果，已转人工处理",
-            result_payload.clone(),
+            "自动处理未成功，已转人工处理",
+            result.clone(),
+            "public",
+            "timeline",
+            Some("manual_review"),
+            Some(false),
         )
         .await?;
-        Ok(result_payload)
+        Ok(result)
     }
 
     async fn run_agent_missing_scan_job(
@@ -1722,7 +2510,7 @@ SELECT id
 FROM agent_requests
 WHERE request_type = $1
   AND series_id = $2
-  AND status_admin IN ('new', 'analyzing', 'auto_processing', 'review_required', 'approved')
+  AND status_admin IN ('new', 'analyzing', 'auto_processing', 'review_required', 'approved', 'waiting_user')
 LIMIT 1
             "#,
         )
@@ -1769,11 +2557,14 @@ WHERE id = $1
             r#"
 INSERT INTO agent_requests (
     id, request_type, source, user_id, title, content, media_type, series_id, season_numbers, episode_numbers,
-    status_user, status_admin, agent_stage, priority, auto_handled, admin_note, agent_note, provider_payload, provider_result
+    status_user, status_admin, agent_stage, priority, auto_handled, admin_note, agent_note,
+    provider_payload, provider_result, public_state, runtime_state, current_round, max_rounds,
+    public_phase, waiting_for_user, pending_question, question_deadline
 )
 VALUES (
     $1, $2, 'auto_detected', NULL, $3, $4, 'series', $5, $6, $7,
-    $8, 'new', 'queued', 10, false, '', '', '{}'::jsonb, '{}'::jsonb
+    $8, 'new', 'queued', 10, false, '', '', '{}'::jsonb, '{}'::jsonb,
+    '{}'::jsonb, '{}'::jsonb, 0, $9, 'queued', false, NULL, NULL
 )
             "#,
         )
@@ -1785,6 +2576,7 @@ VALUES (
         .bind(json!(normalize_int_list(season_numbers)))
         .bind(json!(normalize_int_list(episode_numbers)))
         .bind(admin_status_to_user_status("new"))
+        .bind(self.config_snapshot().agent.max_rounds.clamp(1, 20))
         .execute(&self.pool)
         .await?;
         self.append_agent_request_event(
@@ -1937,6 +2729,7 @@ VALUES (
         &self,
         request: AgentRequest,
         events: Vec<AgentRequestEvent>,
+        include_private: bool,
     ) -> AgentRequestDetail {
         let workflow_kind = infer_workflow_kind(&request.request_type);
         let required_capabilities = workflow_required_capabilities(&workflow_kind)
@@ -1944,11 +2737,27 @@ VALUES (
             .map(|cap| cap.as_str().to_string())
             .collect::<Vec<_>>();
         let workflow_steps =
-            infer_workflow_steps(&workflow_kind, &request.agent_stage, &request.status_admin);
+            infer_workflow_steps(&workflow_kind, &request.public_phase, &request.status_admin);
         let manual_actions = infer_manual_actions(&request.status_admin, request.auto_handled);
+        let public_events = events
+            .iter()
+            .filter(|event| event.visibility != "private")
+            .cloned()
+            .collect::<Vec<_>>();
+        let private_events = if include_private {
+            events
+                .iter()
+                .filter(|event| event.visibility == "private")
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         AgentRequestDetail {
             request,
-            events,
+            events: if include_private { events } else { public_events.clone() },
+            public_events,
+            private_events,
             workflow_kind: workflow_kind.as_str().to_string(),
             workflow_steps,
             required_capabilities,
@@ -2406,6 +3215,12 @@ fn agent_apply_llm_parse_result(
                 agent_note: String::new(),
                 provider_payload: json!({}),
                 provider_result: json!({}),
+                public_state: json!({}),
+                current_round: 0,
+                max_rounds: 10,
+                public_phase: "queued".to_string(),
+                waiting_for_user: false,
+                pending_question: None,
                 last_error: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -2435,6 +3250,230 @@ fn agent_collect_request_titles(request: &AgentRequest) -> Vec<String> {
     }
     titles.extend(agent_extract_title_candidates_from_text(&agent_request_raw_text(request)));
     agent_dedup_strings(titles)
+}
+
+fn scrub_agent_request_for_user(mut request: AgentRequest) -> AgentRequest {
+    request.provider_payload = json!({});
+    request.provider_result = request.public_state.clone();
+    request
+}
+
+fn agent_resolved_year_from_tmdb(tmdb: Option<&AgentResolvedTmdbMetadata>) -> Option<i32> {
+    tmdb.and_then(|value| {
+        agent_tmdb_year(&value.details).and_then(|raw| raw.trim().parse::<i32>().ok())
+    })
+}
+
+fn agent_resolved_year(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> Option<i32> {
+    runtime_state
+        .tmdb_metadata
+        .as_ref()
+        .and_then(|value| value.get("year"))
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .or_else(|| {
+            runtime_state
+                .tvdb_result
+                .as_ref()
+                .and_then(|value| value.get("production_year"))
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+        })
+        .or_else(|| {
+            runtime_state
+                .bangumi_result
+                .as_ref()
+                .and_then(|value| value.get("production_year"))
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+        })
+        .or_else(|| agent_extract_year_hints(&agent_request_raw_text(request)).into_iter().next())
+}
+
+fn agent_filter_moviepilot_contexts(
+    contexts: &[MoviePilotContext],
+    media_type: &str,
+    season: Option<i32>,
+    year: Option<&str>,
+) -> Vec<MoviePilotContext> {
+    let wanted_year = year.and_then(|value| value.trim().parse::<i32>().ok());
+    let mut dedup = HashSet::new();
+    contexts
+        .iter()
+        .filter(|context| {
+            let resolved_year = [
+                context.meta_info.as_ref().map(|value| value.year.as_str()),
+                context.media_info.as_ref().map(|value| value.year.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .find_map(|value| value.trim().parse::<i32>().ok());
+            let year_matches = wanted_year.is_none_or(|expected| resolved_year == Some(expected));
+            let media_matches = if media_type.eq_ignore_ascii_case("movie") {
+                context
+                    .meta_info
+                    .as_ref()
+                    .map(|value| value.r#type.eq_ignore_ascii_case("movie"))
+                    .unwrap_or(true)
+            } else {
+                !context
+                    .meta_info
+                    .as_ref()
+                    .is_some_and(|value| value.r#type.eq_ignore_ascii_case("movie"))
+            };
+            let season_matches = season.is_none_or(|expected| {
+                let resolved = context
+                    .meta_info
+                    .as_ref()
+                    .map(|value| value.season)
+                    .filter(|value| *value > 0)
+                    .or_else(|| {
+                        context
+                            .media_info
+                            .as_ref()
+                            .map(|value| value.season)
+                            .filter(|value| *value > 0)
+                    });
+                resolved.is_none_or(|value| value == expected)
+            });
+            year_matches && media_matches && season_matches
+        })
+        .filter(|context| {
+            dedup.insert(format!(
+                "{}::{}",
+                context.torrent_info.enclosure, context.torrent_info.title
+            ))
+        })
+        .cloned()
+        .collect()
+}
+
+fn agent_build_loop_context(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> Value {
+    json!({
+        "request": {
+            "id": request.id,
+            "request_type": request.request_type,
+            "title": request.title,
+            "content": request.content,
+            "media_type": request.media_type,
+            "tmdb_id": request.tmdb_id,
+            "season_numbers": request.season_numbers,
+            "episode_numbers": request.episode_numbers,
+        },
+        "loop": {
+            "current_round": request.current_round,
+            "max_rounds": request.max_rounds,
+            "public_phase": request.public_phase,
+            "waiting_for_user": request.waiting_for_user,
+        },
+        "resolved_year": agent_resolved_year(request, runtime_state),
+        "runtime": runtime_state,
+    })
+}
+
+fn agent_fallback_loop_action(
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> LlmAgentLoopAction {
+    let year = agent_resolved_year(request, runtime_state);
+    if runtime_state.tmdb_metadata.is_none() && request.tmdb_id.unwrap_or_default() <= 0 {
+        return LlmAgentLoopAction {
+            action: "tmdb_search".to_string(),
+            query: Some(request.title.clone()),
+            year,
+            media_type: Some(request.media_type.clone()),
+            reason: "resolve metadata first".to_string(),
+            ..Default::default()
+        };
+    }
+    if year.is_none() {
+        if request.media_type.eq_ignore_ascii_case("series") && runtime_state.tvdb_result.is_none() {
+            return LlmAgentLoopAction {
+                action: "tvdb_search".to_string(),
+                query: Some(request.title.clone()),
+                media_type: Some(request.media_type.clone()),
+                reason: "series search benefits from tvdb year confirmation".to_string(),
+                ..Default::default()
+            };
+        }
+        if request.media_type.eq_ignore_ascii_case("series")
+            && runtime_state.bangumi_result.is_none()
+        {
+            return LlmAgentLoopAction {
+                action: "bangumi_search".to_string(),
+                query: Some(request.title.clone()),
+                media_type: Some(request.media_type.clone()),
+                reason: "anime-style series benefits from bangumi year confirmation".to_string(),
+                ..Default::default()
+            };
+        }
+        return LlmAgentLoopAction {
+            action: "ask_user".to_string(),
+            question_prompt: Some("请补充该影视作品的年份，便于精确匹配资源。".to_string()),
+            question_helper_text: Some("例如 2024。".to_string()),
+            question_context_brief: Some(request.title.clone()),
+            allow_free_text: true,
+            reason: "year is required before moviepilot search".to_string(),
+            ..Default::default()
+        };
+    }
+    if runtime_state.moviepilot_result.is_none() {
+        return LlmAgentLoopAction {
+            action: "moviepilot_search".to_string(),
+            query: Some(request.title.clone()),
+            year,
+            media_type: Some(request.media_type.clone()),
+            season: request.season_numbers.first().copied(),
+            reason: "search moviepilot after metadata is stable".to_string(),
+            ..Default::default()
+        };
+    }
+
+    let tmdb_meta = request
+        .tmdb_id
+        .filter(|value| *value > 0)
+        .map(|tmdb_id| AgentResolvedTmdbMetadata {
+            kind: if request.media_type.eq_ignore_ascii_case("movie") {
+                "movie"
+            } else {
+                "tv"
+            },
+            tmdb_id,
+            details: json!({}),
+            release_dates: None,
+            watch_providers: None,
+        });
+    let plan = agent_sanitize_execution_plan(
+        agent_fallback_execution_plan(request, tmdb_meta.as_ref(), &runtime_state.moviepilot_contexts),
+        runtime_state.moviepilot_contexts.len(),
+    );
+    let action = match plan.action.as_str() {
+        "download_and_subscribe" => "complete_download_and_subscription",
+        "subscribe" => "complete_subscription",
+        "download" => "complete_download",
+        "reject" => "fail_request",
+        _ => "manual_review",
+    };
+    LlmAgentLoopAction {
+        action: action.to_string(),
+        selected_indices: plan.selected_indices,
+        reason: plan.reason,
+        ..Default::default()
+    }
+}
+
+fn agent_sanitize_loop_action(
+    mut action: LlmAgentLoopAction,
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> LlmAgentLoopAction {
+    if action.action.trim().is_empty() {
+        action = agent_fallback_loop_action(request, runtime_state);
+    }
+    action.selected_indices.sort_unstable();
+    action.selected_indices.dedup();
+    action.allow_free_text = action.allow_free_text || action.action != "ask_user";
+    action
 }
 
 fn agent_tmdb_kind_hints(media_type: &str, has_seasons: bool) -> Vec<&'static str> {
@@ -2809,75 +3848,6 @@ fn agent_build_moviepilot_media_info(
     media
 }
 
-fn agent_context_candidate_summary(index: usize, context: &MoviePilotContext) -> Value {
-    let meta = context.meta_info.as_ref().or(context.media_info.as_ref());
-    let title_upper = context.torrent_info.title.to_ascii_uppercase();
-    let resource_type = meta.map(|value| value.resource_type.clone()).unwrap_or_default();
-    let video_encode = meta.map(|value| value.video_encode.clone()).unwrap_or_default();
-    let season_episode = meta.map(|value| value.season_episode.clone()).unwrap_or_default();
-    let episode_range = meta
-        .map(|value| {
-            if value.begin_episode > 0 && value.end_episode >= value.begin_episode {
-                format!("{}-{}", value.begin_episode, value.end_episode)
-            } else if value.begin_episode > 0 {
-                value.begin_episode.to_string()
-            } else {
-                String::new()
-            }
-        })
-        .unwrap_or_default();
-    json!({
-        "index": index,
-        "title": context.torrent_info.title,
-        "site_name": context.torrent_info.site_name,
-        "seeders": context.torrent_info.seeders,
-        "size_gb": ((context.torrent_info.size / 1024.0 / 1024.0 / 1024.0) * 1000.0).round() / 1000.0,
-        "labels": context.torrent_info.labels,
-        "resource_pix": meta.map(|value| value.resource_pix.clone()).unwrap_or_default(),
-        "resource_type": resource_type,
-        "video_encode": video_encode,
-        "season_episode": season_episode,
-        "episode_range": episode_range,
-        "year": meta.map(|value| value.year.clone()).unwrap_or_default(),
-        "source": meta.map(|value| value.source.clone()).unwrap_or_default(),
-        "cn_name": meta.map(|value| value.title.clone()).unwrap_or_default(),
-        "en_name": meta.map(|value| value.en_title.clone()).unwrap_or_default(),
-        "is_disc_like": agent_is_disc_like(&title_upper),
-        "is_dolby_vision": agent_is_dolby_vision(&title_upper),
-        "is_hdr": agent_is_hdr_candidate(meta, &title_upper),
-        "is_4k": agent_is_4k_candidate(meta, &title_upper),
-    })
-}
-
-fn agent_is_disc_like(title_upper: &str) -> bool {
-    ["BLURAY", "BLUE RAY", "REMUX", "BDMV", "ISO"]
-        .iter()
-        .any(|keyword| title_upper.contains(keyword))
-}
-
-fn agent_is_dolby_vision(title_upper: &str) -> bool {
-    ["DOVI", "DOLBY VISION", "DV "]
-        .iter()
-        .any(|keyword| title_upper.contains(keyword))
-}
-
-fn agent_is_hdr_candidate(meta: Option<&MoviePilotMediaInfo>, title_upper: &str) -> bool {
-    meta.map(|value| value.resource_pix.to_ascii_uppercase().contains("HDR"))
-        .unwrap_or(false)
-        || ["HDR10+", "HDR10", " HDR "]
-            .iter()
-            .any(|keyword| title_upper.contains(keyword))
-}
-
-fn agent_is_4k_candidate(meta: Option<&MoviePilotMediaInfo>, title_upper: &str) -> bool {
-    meta.map(|value| {
-        let pix = value.resource_pix.to_ascii_uppercase();
-        pix.contains("2160") || pix.contains("4K")
-    })
-    .unwrap_or(false)
-        || title_upper.contains("2160")
-        || title_upper.contains("4K")
-}
 
 fn agent_source_aliases(source_name: &str) -> &'static [&'static str] {
     match source_name {
@@ -3107,53 +4077,6 @@ fn agent_fallback_execution_plan(
     }
 }
 
-fn agent_build_execution_context(
-    request: &AgentRequest,
-    tmdb: Option<&AgentResolvedTmdbMetadata>,
-    contexts: &[MoviePilotContext],
-) -> Value {
-    let raw_text = agent_request_raw_text(request);
-    let (preferred_sources, avoid_sources, constraints) =
-        agent_detect_source_preferences(&raw_text);
-    json!({
-        "request": {
-            "title": request.title,
-            "content": request.content,
-            "raw_text": raw_text,
-            "media_type": request.media_type,
-            "tmdb_id": request.tmdb_id,
-            "season_numbers": request.season_numbers,
-            "episode_numbers": request.episode_numbers,
-            "preferred_sources": preferred_sources,
-            "avoid_sources": avoid_sources,
-            "constraints": constraints,
-        },
-        "tmdb": tmdb.map(|value| json!({
-            "kind": value.kind,
-            "tmdb_id": value.tmdb_id,
-            "title": agent_tmdb_primary_title(value.kind, &value.details),
-            "year": agent_tmdb_year(&value.details),
-            "status": value.details.get("status").and_then(Value::as_str),
-            "number_of_episodes": value.details.get("number_of_episodes").and_then(Value::as_i64),
-            "number_of_seasons": value.details.get("number_of_seasons").and_then(Value::as_i64),
-            "next_episode_to_air": value.details.get("next_episode_to_air"),
-            "watch_providers": agent_tmdb_watch_provider_names(value.watch_providers.as_ref()),
-            "earliest_release_date": agent_movie_earliest_release_date(value).map(|date| date.to_string()),
-        })),
-        "policy": {
-            "avoid_disc_like": ["BluRay", "Remux", "BDMV", "ISO"],
-            "prefer": ["higher seeders", "HDR/HDR10+", "4K"],
-            "avoid": ["Dolby Vision", "DoVi"],
-            "series_can_select_multiple": true,
-        },
-        "candidates": contexts
-            .iter()
-            .enumerate()
-            .map(|(index, context)| agent_context_candidate_summary(index, context))
-            .collect::<Vec<_>>(),
-    })
-}
-
 fn agent_sanitize_execution_plan(
     mut plan: LlmAgentExecutionPlan,
     contexts_len: usize,
@@ -3165,19 +4088,6 @@ fn agent_sanitize_execution_plan(
         plan.add_subscription = true;
     }
     plan
-}
-
-fn agent_last_search_error(search_attempts: Option<&Value>) -> Option<String> {
-    search_attempts
-        .and_then(Value::as_array)
-        .and_then(|attempts| {
-            attempts.iter().rev().find_map(|attempt| {
-                attempt
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-        })
 }
 
 #[cfg(test)]
@@ -3207,6 +4117,12 @@ mod agent_request_tests {
             agent_note: String::new(),
             provider_payload: json!({}),
             provider_result: json!({}),
+            public_state: json!({}),
+            current_round: 0,
+            max_rounds: 10,
+            public_phase: "queued".to_string(),
+            waiting_for_user: false,
+            pending_question: None,
             last_error: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

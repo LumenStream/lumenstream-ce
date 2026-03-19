@@ -1,4 +1,5 @@
-import { apiRequest } from "@/lib/api/client";
+import { apiRequest, getApiBaseUrl } from "@/lib/api/client";
+import { getAccessToken } from "@/lib/auth/token";
 import {
   mockAdminGetAgentRequest,
   mockAdminGetAgentSettings,
@@ -17,8 +18,10 @@ import { runWithMock } from "@/lib/mock/mode";
 import type {
   AgentCreateRequest,
   AgentProviderStatus,
+  AgentReplyRequest,
   AgentRequest,
   AgentRequestDetail,
+  AgentRequestRealtimeEvent,
   AgentRequestsQuery,
   AgentReviewRequest,
   AgentSettings,
@@ -58,6 +61,20 @@ export async function resubmitMyRequest(requestId: string): Promise<AgentRequest
     () =>
       apiRequest<AgentRequestDetail>(`/api/requests/${requestId}/resubmit`, {
         method: "POST",
+      })
+  );
+}
+
+export async function replyMyRequest(
+  requestId: string,
+  payload: AgentReplyRequest
+): Promise<AgentRequestDetail> {
+  return runWithMock(
+    () => mockGetMyAgentRequest(requestId),
+    () =>
+      apiRequest<AgentRequestDetail>(`/api/requests/${requestId}/reply`, {
+        method: "POST",
+        body: JSON.stringify(payload),
       })
   );
 }
@@ -138,3 +155,23 @@ export async function adminTestMoviePilot(config: AgentSettings): Promise<Record
       })
   );
 }
+
+export function getMyRequestsWebSocketUrl(token: string): string {
+  const httpUrl = new URL(`${getApiBaseUrl()}/api/requests/ws`);
+  httpUrl.searchParams.set("token", token);
+  httpUrl.protocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+  return httpUrl.toString();
+}
+
+export function getAdminRequestsWebSocketUrl(token: string): string {
+  const httpUrl = new URL(`${getApiBaseUrl()}/admin/requests/ws`);
+  httpUrl.searchParams.set("token", token);
+  httpUrl.protocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+  return httpUrl.toString();
+}
+
+export function getRequestsWebSocketToken(): string | null {
+  return getAccessToken();
+}
+
+export type { AgentRequestRealtimeEvent };

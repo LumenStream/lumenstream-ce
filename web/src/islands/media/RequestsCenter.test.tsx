@@ -22,6 +22,9 @@ vi.mock("@/lib/api/requests", () => ({
   getMyRequest: (...args: unknown[]) => getMyRequestMock(...args),
   createMyRequest: (...args: unknown[]) => createMyRequestMock(...args),
   resubmitMyRequest: (...args: unknown[]) => resubmitMyRequestMock(...args),
+  replyMyRequest: vi.fn(),
+  getMyRequestsWebSocketUrl: vi.fn(() => "ws://127.0.0.1:8096/api/requests/ws?token=test"),
+  getRequestsWebSocketToken: vi.fn(() => null),
 }));
 
 vi.mock("@/components/domain/DataState", () => ({
@@ -84,8 +87,16 @@ describe("RequestsCenter", () => {
         agent_note: "正在搜索",
         provider_payload: {},
         provider_result: {},
+        public_state: {},
+        current_round: 1,
+        max_rounds: 10,
+        public_phase: "searching",
+        waiting_for_user: false,
+        pending_question: null,
+        last_error: null,
         created_at: "2026-03-12T00:00:00Z",
         updated_at: "2026-03-12T00:00:00Z",
+        closed_at: null,
       },
     ]);
     getMyRequestMock.mockResolvedValue({
@@ -107,7 +118,8 @@ describe("RequestsCenter", () => {
         admin_note: "",
         agent_note: "正在搜索",
         provider_payload: {},
-        provider_result: {
+        provider_result: {},
+        public_state: {
           recognized_intent: {
             request_type: "media_request",
             title: "逐玉",
@@ -123,10 +135,19 @@ describe("RequestsCenter", () => {
             reason: "暂无满足偏好的资源",
           },
         },
+        current_round: 3,
+        max_rounds: 10,
+        public_phase: "searching",
+        waiting_for_user: false,
+        pending_question: null,
+        last_error: null,
         created_at: "2026-03-12T00:00:00Z",
         updated_at: "2026-03-12T00:00:00Z",
+        closed_at: null,
       },
       events: [],
+      public_events: [],
+      private_events: [],
       workflow_kind: "request_media",
       workflow_steps: [
         { step: "accepted", label: "接单", status: "completed" },
@@ -155,10 +176,20 @@ describe("RequestsCenter", () => {
         agent_note: "请求已入队",
         provider_payload: {},
         provider_result: {},
+        public_state: {},
+        current_round: 0,
+        max_rounds: 10,
+        public_phase: "queued",
+        waiting_for_user: false,
+        pending_question: null,
+        last_error: null,
         created_at: "2026-03-12T00:00:00Z",
         updated_at: "2026-03-12T00:00:00Z",
+        closed_at: null,
       },
       events: [],
+      public_events: [],
+      private_events: [],
       workflow_kind: "unknown",
       workflow_steps: [],
       required_capabilities: [],
@@ -190,7 +221,7 @@ describe("RequestsCenter", () => {
       await flushEffects();
     });
 
-    expect(container.textContent).toContain("Agent 审计视图");
+    expect(container.textContent).toContain("处理摘要");
     expect(container.textContent).toContain("意图识别");
     expect(container.textContent).toContain("精确搜索参数");
     expect(container.textContent).toContain("执行计划");

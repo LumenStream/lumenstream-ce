@@ -688,6 +688,10 @@ pub struct AgentConfig {
     pub enabled: bool,
     #[serde(default = "default_agent_auto_mode")]
     pub auto_mode: String,
+    #[serde(default = "default_agent_max_rounds")]
+    pub max_rounds: i32,
+    #[serde(default = "default_agent_question_timeout_minutes")]
+    pub question_timeout_minutes: i32,
     #[serde(default)]
     pub missing_scan_enabled: bool,
     #[serde(default = "default_agent_missing_scan_cron")]
@@ -709,6 +713,8 @@ impl Default for AgentConfig {
         Self {
             enabled: false,
             auto_mode: default_agent_auto_mode(),
+            max_rounds: default_agent_max_rounds(),
+            question_timeout_minutes: default_agent_question_timeout_minutes(),
             missing_scan_enabled: false,
             missing_scan_cron: default_agent_missing_scan_cron(),
             auto_close_on_library_hit: true,
@@ -1298,6 +1304,18 @@ impl AppConfig {
             }
         }
 
+        if let Ok(v) = env::var("LS_AGENT_MAX_ROUNDS")
+            && let Ok(parsed) = v.trim().parse::<i32>()
+        {
+            cfg.agent.max_rounds = parsed.clamp(1, 20);
+        }
+
+        if let Ok(v) = env::var("LS_AGENT_QUESTION_TIMEOUT_MINUTES")
+            && let Ok(parsed) = v.trim().parse::<i32>()
+        {
+            cfg.agent.question_timeout_minutes = parsed.max(1);
+        }
+
         if let Ok(v) = env::var("LS_AGENT_MOVIEPILOT_ENABLED") {
             if let Some(parsed) = parse_bool_env(&v) {
                 cfg.agent.moviepilot.enabled = parsed;
@@ -1526,6 +1544,14 @@ fn default_risk_block_seconds() -> i64 {
 
 fn default_agent_auto_mode() -> String {
     "automatic".to_string()
+}
+
+fn default_agent_max_rounds() -> i32 {
+    10
+}
+
+fn default_agent_question_timeout_minutes() -> i32 {
+    1440
 }
 
 fn default_agent_missing_scan_cron() -> String {

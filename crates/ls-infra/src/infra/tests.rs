@@ -273,6 +273,7 @@ mod tests {
         let (notification_tx, _) = tokio::sync::broadcast::channel(16);
         let (task_run_tx, _) = tokio::sync::broadcast::channel(16);
         let (recharge_order_tx, _) = tokio::sync::broadcast::channel(16);
+        let (agent_request_tx, _) = tokio::sync::broadcast::channel(16);
         AppInfra {
             pool,
             config: Arc::new(RwLock::new(AppConfig::default())),
@@ -285,6 +286,7 @@ mod tests {
             notification_tx,
             task_run_tx,
             recharge_order_tx,
+            agent_request_tx,
         }
     }
 
@@ -3006,6 +3008,7 @@ mod tests {
         let (notification_tx, _) = tokio::sync::broadcast::channel(16);
         let (task_run_tx, _) = tokio::sync::broadcast::channel(16);
         let (recharge_order_tx, _) = tokio::sync::broadcast::channel(16);
+        let (agent_request_tx, _) = tokio::sync::broadcast::channel(16);
         let infra = AppInfra {
             pool,
             config: Arc::new(RwLock::new(AppConfig::default())),
@@ -3018,6 +3021,7 @@ mod tests {
             notification_tx,
             task_run_tx,
             recharge_order_tx,
+            agent_request_tx,
         };
 
         let err = infra
@@ -3037,6 +3041,7 @@ mod tests {
         let (notification_tx, _) = tokio::sync::broadcast::channel(16);
         let (task_run_tx, _) = tokio::sync::broadcast::channel(16);
         let (recharge_order_tx, _) = tokio::sync::broadcast::channel(16);
+        let (agent_request_tx, _) = tokio::sync::broadcast::channel(16);
         let infra = AppInfra {
             pool,
             config: Arc::new(RwLock::new(AppConfig::default())),
@@ -3049,6 +3054,7 @@ mod tests {
             notification_tx,
             task_run_tx,
             recharge_order_tx,
+            agent_request_tx,
         };
 
         let mut web = infra.config_snapshot().web_config();

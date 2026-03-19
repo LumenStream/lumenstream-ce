@@ -26,7 +26,10 @@ import {
 import {
   createMyRequest,
   getMyRequest,
+  getMyRequestsWebSocketUrl,
+  getRequestsWebSocketToken,
   listMyRequests,
+  replyMyRequest,
   resubmitMyRequest,
 } from "@/lib/api/requests";
 import type { ApiError } from "@/lib/api/client";
@@ -34,8 +37,10 @@ import { useAuthSession } from "@/lib/auth/use-auth-session";
 import { toast } from "@/lib/notifications/toast-store";
 import type {
   AgentCreateRequest,
+  AgentPendingQuestion,
   AgentRequest,
   AgentRequestDetail,
+  AgentRequestRealtimeEvent,
   AgentWorkflowStepState,
 } from "@/lib/types/requests";
 import { cn, formatDate, formatDuration, formatRelativeTime } from "@/lib/utils";
@@ -99,6 +104,9 @@ export function RequestsCenter() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resubmittingId, setResubmittingId] = useState<string | null>(null);
+  const [replying, setReplying] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -143,6 +151,52 @@ export function RequestsCenter() {
     if (!ready) return;
     void reload();
   }, [ready, reload]);
+
+  useEffect(() => {
+    if (!ready || typeof WebSocket === "undefined") {
+      return;
+    }
+    const token = getRequestsWebSocketToken();
+    if (!token) {
+      return;
+    }
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectDelay = 1000;
+
+    const connect = () => {
+      if (closed) return;
+      ws = new WebSocket(getMyRequestsWebSocketUrl(token));
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+      };
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as AgentRequestRealtimeEvent;
+          void reload();
+          if (detail?.request.id === parsed.request_id) {
+            void onSelect(parsed.request_id);
+          }
+        } catch {
+          // Ignore malformed websocket events.
+        }
+      };
+      ws.onerror = () => ws?.close();
+      ws.onclose = () => {
+        if (closed) return;
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [detail?.request.id, onSelect, ready, reload]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -199,6 +253,31 @@ export function RequestsCenter() {
     }
   }
 
+  async function onReply(question: AgentPendingQuestion) {
+    if (!detail) return;
+    if (!selectedOption && !replyText.trim()) {
+      toast.warning("请先选择一个选项或补充文本");
+      return;
+    }
+    setReplying(true);
+    try {
+      const payload = await replyMyRequest(detail.request.id, {
+        question_id: question.id,
+        selected_option: selectedOption,
+        text: replyText.trim() || null,
+      });
+      setDetail(payload);
+      setSelectedOption(null);
+      setReplyText("");
+      toast.success("补充信息已发送");
+    } catch (cause) {
+      const apiError = cause as ApiError;
+      toast.error(apiError.message || "回复失败");
+    } finally {
+      setReplying(false);
+    }
+  }
+
   const summary = useMemo(
     () => ({
       total: requests.length,
@@ -217,7 +296,7 @@ export function RequestsCenter() {
   }
 
   if (detail || detailLoading) {
-    const audit = detail?.request.provider_result;
+    const publicState = detail?.request.public_state;
     return (
       <div className="animate-in fade-in slide-in-from-bottom-4 mx-auto max-w-5xl space-y-6 duration-300">
         <Button
@@ -285,6 +364,15 @@ export function RequestsCenter() {
               />
             </div>
 
+            <div className="grid grid-cols-3 gap-4">
+              <InfoStat label="公开阶段" value={detail.request.public_phase || "-"} />
+              <InfoStat
+                label="当前轮次"
+                value={`${detail.request.current_round} / ${detail.request.max_rounds}`}
+              />
+              <InfoStat label="等待回复" value={detail.request.waiting_for_user ? "是" : "否"} />
+            </div>
+
             <div className="grid gap-6 md:grid-cols-2">
               <div className="space-y-6">
                 <div className="bg-card rounded-xl border p-5 shadow-sm">
@@ -327,8 +415,20 @@ export function RequestsCenter() {
                   </div>
                 )}
 
-                {hasObjectContent(audit) && (
-                  <AuditInsightCard title="Agent 审计视图" payload={audit} />
+                {detail.request.pending_question && (
+                  <QuestionCard
+                    question={detail.request.pending_question}
+                    selectedOption={selectedOption}
+                    replyText={replyText}
+                    replying={replying}
+                    onSelectOption={setSelectedOption}
+                    onReplyTextChange={setReplyText}
+                    onSubmit={() => void onReply(detail.request.pending_question!)}
+                  />
+                )}
+
+                {hasObjectContent(publicState) && (
+                  <AuditInsightCard title="处理摘要" payload={publicState} />
                 )}
 
                 {detail.request.admin_note && (
@@ -610,6 +710,66 @@ function AuditInsightCard({ title, payload }: { title: string; payload: Record<s
         {!recognizedIntent && !exactQuery && !agentPlan && (
           <AuditBlock label="原始审计数据" value={payload} />
         )}
+      </div>
+    </div>
+  );
+}
+
+function QuestionCard({
+  question,
+  selectedOption,
+  replyText,
+  replying,
+  onSelectOption,
+  onReplyTextChange,
+  onSubmit,
+}: {
+  question: AgentPendingQuestion;
+  selectedOption: string | null;
+  replyText: string;
+  replying: boolean;
+  onSelectOption: (value: string | null) => void;
+  onReplyTextChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="bg-card rounded-xl border p-5 shadow-sm">
+      <h3 className="mb-2 font-semibold">Agent 需要你补充信息</h3>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap">{question.prompt}</p>
+      {question.helper_text && (
+        <p className="text-muted-foreground mt-2 text-xs">{question.helper_text}</p>
+      )}
+      {question.context_brief && (
+        <div className="bg-muted/40 mt-4 rounded-lg border p-3 text-xs">
+          {question.context_brief}
+        </div>
+      )}
+      {question.options.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {question.options.map((option) => (
+            <Button
+              key={option.value}
+              variant={selectedOption === option.value ? "default" : "outline"}
+              size="sm"
+              onClick={() => onSelectOption(option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      )}
+      {question.allow_free_text && (
+        <Textarea
+          className="mt-4 min-h-[96px]"
+          value={replyText}
+          onChange={(event) => onReplyTextChange(event.target.value)}
+          placeholder="补充任何有助于 Agent 继续处理的信息。"
+        />
+      )}
+      <div className="mt-4 flex justify-end">
+        <Button onClick={onSubmit} disabled={replying}>
+          {replying ? "发送中..." : "发送补充信息"}
+        </Button>
       </div>
     </div>
   );

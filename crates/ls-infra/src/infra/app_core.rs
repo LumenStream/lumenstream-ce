@@ -11,6 +11,7 @@ impl AppInfra {
         let (notification_tx, _) = broadcast::channel(256);
         let (task_run_tx, _) = broadcast::channel(512);
         let (recharge_order_tx, _) = broadcast::channel(256);
+        let (agent_request_tx, _) = broadcast::channel(512);
 
         let this = Self {
             pool,
@@ -24,6 +25,7 @@ impl AppInfra {
             notification_tx,
             task_run_tx,
             recharge_order_tx,
+            agent_request_tx,
         };
         this.bootstrap().await?;
         this.ensure_web_settings_seeded().await?;
