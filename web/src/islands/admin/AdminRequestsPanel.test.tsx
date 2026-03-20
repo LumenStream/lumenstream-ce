@@ -13,6 +13,10 @@ const adminGetRequestMock = vi.fn();
 const adminGetAgentSettingsMock = vi.fn();
 const adminListAgentProvidersMock = vi.fn();
 const adminTestMoviePilotMock = vi.fn();
+const getRequestsWebSocketTokenMock = vi.fn();
+
+let websocketToken: string | null = null;
+const websocketInstances: MockWebSocket[] = [];
 
 vi.mock("@/lib/auth/use-auth-session", () => ({
   useAuthSession: () => ({ ready: true }),
@@ -24,7 +28,7 @@ vi.mock("@/lib/api/requests", () => ({
   adminGetAgentSettings: (...args: unknown[]) => adminGetAgentSettingsMock(...args),
   adminListAgentProviders: (...args: unknown[]) => adminListAgentProvidersMock(...args),
   getAdminRequestsWebSocketUrl: vi.fn(() => "ws://127.0.0.1:8096/admin/requests/ws?token=test"),
-  getRequestsWebSocketToken: vi.fn(() => null),
+  getRequestsWebSocketToken: (...args: unknown[]) => getRequestsWebSocketTokenMock(...args),
   adminRetryRequest: vi.fn(),
   adminReviewRequest: vi.fn(),
   adminTestMoviePilot: (...args: unknown[]) => adminTestMoviePilotMock(...args),
@@ -61,6 +65,23 @@ function findLabelByText(container: HTMLElement, label: string): HTMLLabelElemen
   ) as HTMLLabelElement | undefined;
 }
 
+class MockWebSocket {
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+
+  constructor(public url: string) {
+    websocketInstances.push(this);
+  }
+
+  close() {}
+
+  emitMessage(payload: unknown) {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  }
+}
+
 describe("AdminRequestsPanel", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -72,6 +93,10 @@ describe("AdminRequestsPanel", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    websocketToken = null;
+    getRequestsWebSocketTokenMock.mockImplementation(() => websocketToken);
+    websocketInstances.length = 0;
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
 
     adminListRequestsMock.mockResolvedValue([
       {
@@ -93,8 +118,16 @@ describe("AdminRequestsPanel", () => {
         agent_note: "等待人工处理",
         provider_payload: {},
         provider_result: {},
+        public_state: {},
+        current_round: 1,
+        max_rounds: 10,
+        public_phase: "manual_review",
+        waiting_for_user: false,
+        pending_question: null,
+        last_error: null,
         created_at: "2026-03-12T00:00:00Z",
         updated_at: "2026-03-12T00:00:00Z",
+        closed_at: null,
       },
     ]);
     adminGetRequestMock.mockResolvedValue({
@@ -117,10 +150,20 @@ describe("AdminRequestsPanel", () => {
         agent_note: "等待人工处理",
         provider_payload: {},
         provider_result: {},
+        public_state: {},
+        current_round: 1,
+        max_rounds: 10,
+        public_phase: "manual_review",
+        waiting_for_user: false,
+        pending_question: null,
+        last_error: null,
         created_at: "2026-03-12T00:00:00Z",
         updated_at: "2026-03-12T00:00:00Z",
+        closed_at: null,
       },
       events: [],
+      public_events: [],
+      private_events: [],
       workflow_kind: "missing_episode_repair",
       workflow_steps: [{ step: "manual_review", label: "人工接管", status: "blocked" }],
       required_capabilities: ["metadata", "search", "download", "subscribe", "notify"],
@@ -188,6 +231,7 @@ describe("AdminRequestsPanel", () => {
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = undefined;
+    delete (globalThis as Partial<typeof globalThis>).WebSocket;
     vi.clearAllMocks();
   });
 
@@ -259,5 +303,85 @@ describe("AdminRequestsPanel", () => {
         moviepilot: expect.objectContaining({ enabled: false }),
       })
     );
+  });
+
+  it("merges websocket request updates without reloading the page", async () => {
+    websocketToken = "token";
+
+    await act(async () => {
+      root.render(<AdminRequestsPanel />);
+      await flushEffects();
+    });
+
+    await act(async () => {
+      container
+        .querySelector("tbody tr")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushEffects();
+    });
+
+    expect(adminListRequestsMock).toHaveBeenCalledTimes(1);
+    expect(adminGetRequestMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      websocketInstances[0]?.emitMessage({
+        request_id: "req-1",
+        request: {
+          id: "req-1",
+          request_type: "missing_episode",
+          source: "auto_detected",
+          title: "基地 缺集",
+          content: "S02 缺 E05",
+          media_type: "series",
+          tmdb_id: 1,
+          season_numbers: [2],
+          episode_numbers: [5],
+          status_user: "success",
+          status_admin: "completed",
+          agent_stage: "completed",
+          priority: 10,
+          auto_handled: false,
+          admin_note: "已处理",
+          agent_note: "任务完成",
+          provider_payload: {},
+          provider_result: {},
+          public_state: {},
+          current_round: 2,
+          max_rounds: 10,
+          public_phase: "completed",
+          waiting_for_user: false,
+          pending_question: null,
+          last_error: null,
+          created_at: "2026-03-12T00:00:00Z",
+          updated_at: "2026-03-12T00:05:00Z",
+          closed_at: null,
+        },
+        status_user: "success",
+        status_admin: "completed",
+        public_phase: "completed",
+        waiting_for_user: false,
+        current_round: 2,
+        max_rounds: 10,
+        updated_at: "2026-03-12T00:05:00Z",
+        latest_event: {
+          id: "evt-admin-1",
+          request_id: "req-1",
+          event_type: "agent.completed",
+          actor_user_id: null,
+          actor_username: "system",
+          summary: "Agent 已自动完成当前请求",
+          detail: {},
+          visibility: "public",
+          channel: "timeline",
+          created_at: "2026-03-12T00:05:00Z",
+        },
+      });
+      await flushEffects();
+    });
+
+    expect(adminListRequestsMock).toHaveBeenCalledTimes(1);
+    expect(adminGetRequestMock).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("completed");
+    expect(container.textContent).toContain("Agent 已自动完成当前请求");
   });
 });

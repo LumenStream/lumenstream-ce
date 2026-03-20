@@ -18,8 +18,9 @@ use meilisearch_sdk::{client::Client as MeiliClient, indexes::Index as MeiliInde
 use ls_agent::{
     AgentPendingQuestion, AgentProviderCapability, AgentProviderStatus, AgentQuestionOption,
     AgentRequest, AgentRequestCreateInput, AgentRequestDetail, AgentRequestEvent,
-    LlmAgentExecutionPlan, LlmAgentLoopAction, LlmParseResult, LlmProvider, MoviePilotProvider,
-    USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING, admin_status_to_user_status,
+    LlmAgentExecutionPlan, LlmAgentLoopAction, LlmAgentToolRequest, LlmParseResult, LlmProvider,
+    MoviePilotProvider, USER_STATUS_ACTION_REQUIRED, USER_STATUS_PROCESSING,
+    admin_status_to_user_status,
     MoviePilotContext, MoviePilotExactSearchQuery, MoviePilotMediaInfo,
     build_download_payload_with_context,
     build_subscription_payload, choose_best_result, decode_search_contexts,
@@ -92,6 +93,7 @@ pub struct RechargeOrderEvent {
 pub struct AgentRequestRealtimeEvent {
     pub request_id: Uuid,
     pub user_id: Option<Uuid>,
+    pub request: AgentRequest,
     pub status_user: String,
     pub status_admin: String,
     pub public_phase: String,

@@ -95,6 +95,46 @@ function hasObjectContent(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && Object.keys(value as object).length > 0;
 }
 
+function mergeRealtimeRequestIntoList(
+  current: AgentRequest[],
+  incoming: AgentRequest
+): AgentRequest[] {
+  const existingIndex = current.findIndex((item) => item.id === incoming.id);
+  if (existingIndex < 0) {
+    return [incoming, ...current];
+  }
+  return current.map((item, index) => (index === existingIndex ? incoming : item));
+}
+
+function mergeRealtimeEvent<T extends { id: string; created_at: string }>(
+  current: T[],
+  incoming?: T | null
+): T[] {
+  if (!incoming || current.some((item) => item.id === incoming.id)) {
+    return current;
+  }
+  return [...current, incoming].sort((left, right) =>
+    left.created_at.localeCompare(right.created_at)
+  );
+}
+
+function mergeRealtimeDetail(
+  current: AgentRequestDetail | null,
+  incoming: AgentRequestRealtimeEvent
+): AgentRequestDetail | null {
+  if (!current || current.request.id !== incoming.request_id) {
+    return current;
+  }
+  const nextPublicEvents = mergeRealtimeEvent(current.public_events ?? [], incoming.latest_event);
+  return {
+    ...current,
+    request: incoming.request,
+    events: mergeRealtimeEvent(current.events, incoming.latest_event),
+    public_events: nextPublicEvents,
+    private_events: current.private_events ?? [],
+  };
+}
+
 export function RequestsCenter() {
   const { ready } = useAuthSession();
   const [requests, setRequests] = useState<AgentRequest[]>([]);
@@ -121,7 +161,6 @@ export function RequestsCenter() {
 
   const onSelect = useCallback(async (requestId: string) => {
     setDetailLoading(true);
-    setDetail(null);
     try {
       const payload = await getMyRequest(requestId);
       setDetail(payload);
@@ -174,10 +213,8 @@ export function RequestsCenter() {
       ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data) as AgentRequestRealtimeEvent;
-          void reload();
-          if (detail?.request.id === parsed.request_id) {
-            void onSelect(parsed.request_id);
-          }
+          setRequests((current) => mergeRealtimeRequestIntoList(current, parsed.request));
+          setDetail((current) => mergeRealtimeDetail(current, parsed));
         } catch {
           // Ignore malformed websocket events.
         }
@@ -196,7 +233,7 @@ export function RequestsCenter() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [detail?.request.id, onSelect, ready, reload]);
+  }, [ready]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

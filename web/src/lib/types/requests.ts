@@ -189,6 +189,7 @@ export interface AgentProviderStatus {
 export interface AgentRequestRealtimeEvent {
   request_id: string;
   user_id?: string | null;
+  request: AgentRequest;
   status_user: string;
   status_admin: string;
   public_phase: string;

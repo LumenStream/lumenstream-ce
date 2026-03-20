@@ -4,7 +4,9 @@ pub mod moviepilot;
 pub mod provider;
 pub mod workflow;
 
-pub use llm::{LlmAgentExecutionPlan, LlmAgentLoopAction, LlmParseResult, LlmProvider};
+pub use llm::{
+    LlmAgentExecutionPlan, LlmAgentLoopAction, LlmAgentToolRequest, LlmParseResult, LlmProvider,
+};
 pub use model::{
     AgentManualAction, AgentPendingQuestion, AgentQuestionOption, AgentRequest,
     AgentRequestCreateInput, AgentRequestDetail, AgentRequestEvent, USER_STATUS_ACTION_REQUIRED,

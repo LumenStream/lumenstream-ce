@@ -45,8 +45,29 @@ pub struct LlmAgentExecutionPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmAgentToolRequest {
+    pub tool: String,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub year: Option<i32>,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub season: Option<i32>,
+    #[serde(default)]
+    pub ranking_strategy: Option<String>,
+    #[serde(default)]
+    pub intent_hint: Option<String>,
+    #[serde(default)]
+    pub franchise_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmAgentLoopAction {
     pub action: String,
+    #[serde(default)]
+    pub tool_requests: Vec<LlmAgentToolRequest>,
     #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
@@ -254,16 +275,21 @@ Decision goals:
 You must inspect the provided context and call the action selection tool exactly once.
 
 Loop rules:
-1. Choose exactly one next action for this round.
-2. Prefer to resolve metadata ambiguity before searching MoviePilot.
-3. MoviePilot search MUST include a year. If the year is unknown, ask the user or use metadata tools first.
-4. Use bangumi only for anime/series style titles or when other metadata tools are weak.
-5. Use tvdb for series-oriented matching and episode context.
-6. Use tmdb for general movie/series matching and year confirmation.
-7. If there is enough information and candidate resources exist, decide whether to download, subscribe, or both.
-8. If the case is blocked or risky, ask the user or send to manual_review.
-9. Never expose internal reasoning in question text or reason fields.
-10. Always call the tool; do not answer in plain text."#;
+1. Choose either one terminal action OR one run_tools action for this round.
+2. run_tools may contain 1 to 3 tool requests executed sequentially in the same round.
+3. Prefer multi-source search when metadata is ambiguous, franchise-based, anime-related, or when a previous tool failed.
+4. Prefer to resolve metadata ambiguity before searching MoviePilot.
+5. MoviePilot search MUST include a year. If the year is unknown, ask the user or use metadata tools first.
+6. Use bangumi for anime/franchise titles, especially when the user wants the newest season, latest entry, or follow-up tracking.
+7. Use tvdb for series-oriented matching and episode/season context.
+8. Use tmdb for general movie/series matching and year confirmation.
+9. Review prior tool failures and avoid repeating the same failed tool/query combination unless new context justifies it.
+10. Use ranking_strategy / intent_hint / franchise_mode to guide searches. For example, newest franchise follow-up should prefer latest_release + follow_latest + prefer_newest_entry.
+11. Candidate lists from tools are visible to you; evaluate them before deciding.
+12. If there is enough information and candidate resources exist, decide whether to download, subscribe, or both.
+13. If the case is blocked or risky, ask the user or send to manual_review.
+14. Never expose internal reasoning in question text or reason fields.
+15. Always call the tool; do not answer in plain text."#;
 
         let schema = json!({
             "type": "object",
@@ -271,6 +297,7 @@ Loop rules:
                 "action": {
                     "type": "string",
                     "enum": [
+                        "run_tools",
                         "tmdb_search",
                         "tvdb_search",
                         "bangumi_search",
@@ -282,6 +309,37 @@ Loop rules:
                         "manual_review",
                         "fail_request"
                     ]
+                },
+                "tool_requests": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {
+                                "type": "string",
+                                "enum": ["tmdb_search", "tvdb_search", "bangumi_search", "moviepilot_search"]
+                            },
+                            "query": { "type": ["string", "null"] },
+                            "year": { "type": ["integer", "null"] },
+                            "media_type": { "type": ["string", "null"] },
+                            "season": { "type": ["integer", "null"] },
+                            "ranking_strategy": {
+                                "type": ["string", "null"],
+                                "enum": [null, "best_match", "latest_release", "latest_airing", "highest_popularity", "franchise_continuation", "exact_year_first"]
+                            },
+                            "intent_hint": {
+                                "type": ["string", "null"],
+                                "enum": [null, "find_any_available", "follow_latest", "replace_source", "repair_missing_episode", "repair_missing_season"]
+                            },
+                            "franchise_mode": {
+                                "type": ["string", "null"],
+                                "enum": [null, "standalone", "prefer_newest_entry", "prefer_mainline", "prefer_exact_alias"]
+                            }
+                        },
+                        "required": ["tool", "query", "year", "media_type", "season", "ranking_strategy", "intent_hint", "franchise_mode"],
+                        "additionalProperties": false
+                    },
+                    "default": []
                 },
                 "query": { "type": ["string", "null"] },
                 "year": { "type": ["integer", "null"] },
@@ -305,6 +363,7 @@ Loop rules:
             },
             "required": [
                 "action",
+                "tool_requests",
                 "query",
                 "year",
                 "media_type",

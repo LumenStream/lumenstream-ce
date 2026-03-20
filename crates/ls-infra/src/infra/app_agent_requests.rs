@@ -196,11 +196,35 @@ struct AgentLoopRuntimeState {
     #[serde(default)]
     moviepilot_result: Option<Value>,
     #[serde(default)]
+    tmdb_candidates: Vec<Value>,
+    #[serde(default)]
+    tvdb_candidates: Vec<Value>,
+    #[serde(default)]
+    bangumi_candidates: Vec<Value>,
+    #[serde(default)]
+    moviepilot_candidates: Vec<Value>,
+    #[serde(default)]
     moviepilot_contexts: Vec<MoviePilotContext>,
     #[serde(default)]
     user_replies: Vec<AgentUserReply>,
     #[serde(default)]
     latest_reason: Option<String>,
+    #[serde(default)]
+    tool_history: Vec<AgentToolExecutionRecord>,
+    #[serde(default)]
+    failed_action_counts: HashMap<String, i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AgentToolExecutionRecord {
+    action: String,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    context: Value,
+    created_at: DateTime<Utc>,
 }
 
 impl AppInfra {
@@ -964,6 +988,7 @@ LIMIT 1
         let Some(request) = self.get_agent_request(request_id).await? else {
             return Ok(());
         };
+        let public_request = scrub_agent_request_for_user(request.clone());
         let latest_event = self
             .list_agent_request_events(request_id)
             .await?
@@ -973,6 +998,7 @@ LIMIT 1
         let _ = self.agent_request_tx.send(AgentRequestRealtimeEvent {
             request_id,
             user_id: request.user_id,
+            request: public_request,
             status_user: request.status_user,
             status_admin: request.status_admin,
             public_phase: request.public_phase,
@@ -1117,6 +1143,7 @@ LIMIT 1
         Ok(None)
     }
 
+    #[allow(dead_code)]
     async fn tmdb_fetch_tv_details(&self, tv_id: i64) -> anyhow::Result<Option<Value>> {
         let details_endpoint = format!(
             "{TMDB_API_BASE}/tv/{tv_id}?language={lang}&append_to_response=credits,images,content_ratings&include_image_language={include_image_language}",
@@ -1127,6 +1154,7 @@ LIMIT 1
         self.tmdb_get_json_opt(&details_endpoint).await
     }
 
+    #[allow(dead_code)]
     async fn tmdb_fetch_movie_release_dates_for_agent(
         &self,
         movie_id: i64,
@@ -1135,6 +1163,7 @@ LIMIT 1
         self.tmdb_get_json_opt(&endpoint).await
     }
 
+    #[allow(dead_code)]
     async fn tmdb_fetch_movie_watch_providers_for_agent(
         &self,
         movie_id: i64,
@@ -1188,6 +1217,7 @@ LIMIT 1
         Ok(results)
     }
 
+    #[allow(dead_code)]
     async fn fetch_agent_tmdb_metadata_by_id(
         &self,
         tmdb_id: i64,
@@ -1223,6 +1253,7 @@ LIMIT 1
         Ok(None)
     }
 
+    #[allow(dead_code)]
     async fn resolve_agent_tmdb_metadata(
         &self,
         request: &AgentRequest,
@@ -1308,6 +1339,7 @@ LIMIT 1
         }))
     }
 
+    #[allow(dead_code)]
     async fn persist_agent_tmdb_resolution(
         &self,
         request: &mut AgentRequest,
@@ -1727,236 +1759,71 @@ LIMIT 1
         runtime_state: &mut AgentLoopRuntimeState,
         action: &LlmAgentLoopAction,
     ) -> anyhow::Result<Option<Value>> {
+        if !action.tool_requests.is_empty() || agent_action_is_search(&action.action) {
+            let tool_requests = agent_collect_tool_requests(action, request, runtime_state);
+            let mut results = Vec::new();
+            for tool_request in &tool_requests {
+                let result = match self
+                    .execute_agent_tool_request(job_id, request, runtime_state, tool_request)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(err) => {
+                        let payload = json!({
+                            "tool": tool_request.tool,
+                            "query": tool_request.query,
+                            "year": tool_request.year,
+                            "media_type": tool_request.media_type,
+                            "season": tool_request.season,
+                            "ranking_strategy": tool_request.ranking_strategy,
+                            "intent_hint": tool_request.intent_hint,
+                            "franchise_mode": tool_request.franchise_mode,
+                            "error": err.to_string(),
+                        });
+                        agent_record_tool_execution(
+                            runtime_state,
+                            &tool_request.tool,
+                            tool_request.query.as_deref(),
+                            "failed",
+                            payload.clone(),
+                        );
+                        self.append_agent_request_event_with_meta(
+                            request.id,
+                            "agent.tool_request_failed",
+                            None,
+                            Some("system"),
+                            "工具执行失败，已返回失败上下文给 Agent",
+                            payload.clone(),
+                            "private",
+                            "tool",
+                        )
+                        .await?;
+                        self.persist_agent_runtime_snapshot(
+                            request,
+                            runtime_state,
+                            &json!({
+                                "phase": "analyzing",
+                                "message": "某个工具执行失败，Agent 正在基于失败上下文重新决策。",
+                                "failed_tool": tool_request.tool,
+                            }),
+                            "analyzing",
+                            false,
+                            None,
+                            None,
+                        )
+                        .await?;
+                        payload
+                    }
+                };
+                results.push(result);
+                if request.waiting_for_user {
+                    return Ok(Some(json!({ "paused": true, "tool_results": results })));
+                }
+            }
+            return Ok(None);
+        }
+
         match action.action.as_str() {
-            "tmdb_search" => {
-                self.set_job_progress(job_id, "tmdb", 1, 0, "正在匹配 TMDB 元数据", json!({}))
-                    .await?;
-                let resolved = self.resolve_agent_tmdb_metadata(request).await?;
-                let payload = if let Some(tmdb) = resolved.as_ref() {
-                    self.persist_agent_tmdb_resolution(request, tmdb).await?;
-                    let summary = json!({
-                        "provider": "tmdb",
-                        "tmdb_id": tmdb.tmdb_id,
-                        "media_type": tmdb.kind,
-                        "title": agent_tmdb_primary_title(tmdb.kind, &tmdb.details),
-                        "year": agent_tmdb_year(&tmdb.details),
-                    });
-                    runtime_state.tmdb_metadata = Some(summary.clone());
-                    summary
-                } else {
-                    json!({
-                        "provider": "tmdb",
-                        "matched": false,
-                        "title": request.title,
-                    })
-                };
-                self.persist_agent_runtime_snapshot(
-                    request,
-                    runtime_state,
-                    &json!({
-                        "phase": "analyzing",
-                        "message": if resolved.is_some() { "已匹配 TMDB 元数据。" } else { "暂未匹配到 TMDB 元数据。" },
-                        "tmdb": payload,
-                    }),
-                    "analyzing",
-                    false,
-                    None,
-                    None,
-                )
-                .await?;
-                Ok(None)
-            }
-            "tvdb_search" => {
-                let payload = self
-                    .search_tvdb_for_request(
-                        action.query.as_deref().unwrap_or(&request.title),
-                        agent_resolved_year(request, runtime_state),
-                        agent_effective_media_type(&request.media_type, None),
-                    )
-                    .await?;
-                runtime_state.tvdb_result = Some(payload.clone());
-                self.append_agent_request_event_with_meta(
-                    request.id,
-                    "agent.tvdb_search_completed",
-                    None,
-                    Some("system"),
-                    "已完成 TVDB 搜索",
-                    payload.clone(),
-                    "private",
-                    "tool",
-                )
-                .await?;
-                self.persist_agent_runtime_snapshot(
-                    request,
-                    runtime_state,
-                    &json!({
-                        "phase": "analyzing",
-                        "message": "已完成 TVDB 元数据匹配。",
-                    }),
-                    "analyzing",
-                    false,
-                    None,
-                    None,
-                )
-                .await?;
-                Ok(None)
-            }
-            "bangumi_search" => {
-                let payload = self
-                    .search_bangumi_for_request(
-                        action.query.as_deref().unwrap_or(&request.title),
-                        agent_resolved_year(request, runtime_state),
-                    )
-                    .await?;
-                runtime_state.bangumi_result = Some(payload.clone());
-                self.append_agent_request_event_with_meta(
-                    request.id,
-                    "agent.bangumi_search_completed",
-                    None,
-                    Some("system"),
-                    "已完成 Bangumi 搜索",
-                    payload.clone(),
-                    "private",
-                    "tool",
-                )
-                .await?;
-                self.persist_agent_runtime_snapshot(
-                    request,
-                    runtime_state,
-                    &json!({
-                        "phase": "analyzing",
-                        "message": "已完成 Bangumi 元数据匹配。",
-                    }),
-                    "analyzing",
-                    false,
-                    None,
-                    None,
-                )
-                .await?;
-                Ok(None)
-            }
-            "moviepilot_search" => {
-                self.set_job_progress(job_id, "moviepilot", 1, 0, "正在搜索资源", json!({}))
-                    .await?;
-                let Some(year) = agent_resolved_year(request, runtime_state) else {
-                    let question = AgentPendingQuestion {
-                        id: Uuid::now_v7().to_string(),
-                        prompt: "请补充该影视作品的年份，便于精确匹配资源。".to_string(),
-                        helper_text: Some("例如 2024。".to_string()),
-                        options: Vec::new(),
-                        allow_free_text: true,
-                        context_brief: Some(request.title.clone()),
-                        asked_at: Utc::now(),
-                        deadline_at: Some(
-                            Utc::now()
-                                + Duration::minutes(
-                                    self.config_snapshot().agent.question_timeout_minutes as i64,
-                                ),
-                        ),
-                    };
-                    self.persist_agent_runtime_snapshot(
-                        request,
-                        runtime_state,
-                        &json!({
-                            "phase": "awaiting_user",
-                            "message": question.prompt,
-                        }),
-                        "awaiting_user",
-                        true,
-                        Some(&question),
-                        question.deadline_at,
-                    )
-                    .await?;
-                    self.update_request_state_with_event_meta(
-                        request.id,
-                        USER_STATUS_ACTION_REQUIRED,
-                        "waiting_user",
-                        "manual_review",
-                        false,
-                        &request.admin_note,
-                        "等待用户补充信息",
-                        &request.provider_result,
-                        None,
-                        None,
-                        "agent.question_asked",
-                        None,
-                        Some("system"),
-                        "Agent 需要你补充信息后才能继续",
-                        json!({
-                            "question_id": question.id,
-                            "prompt": question.prompt,
-                            "allow_free_text": true,
-                            "deadline_at": question.deadline_at,
-                        }),
-                        "public",
-                        "question",
-                        Some("awaiting_user"),
-                        Some(true),
-                    )
-                    .await?;
-                    return Ok(Some(json!({ "paused": true, "question_id": question.id })));
-                };
-                let mut moviepilot =
-                    MoviePilotProvider::from_config(&self.config_snapshot().agent.moviepilot)?
-                        .into_client();
-                let tmdb = request
-                    .tmdb_id
-                    .filter(|value| *value > 0)
-                    .and_then(|tmdb_id| runtime_state.tmdb_metadata.as_ref().map(|_| tmdb_id))
-                    .map(|tmdb_id| AgentResolvedTmdbMetadata {
-                        kind: if request.media_type.eq_ignore_ascii_case("movie") {
-                            "movie"
-                        } else {
-                            "tv"
-                        },
-                        tmdb_id,
-                        details: json!({}),
-                        release_dates: None,
-                        watch_providers: None,
-                    });
-                let outcome = self
-                    .search_moviepilot_aggregated_for_request(
-                        &mut moviepilot,
-                        request,
-                        tmdb.as_ref(),
-                        &self.config_snapshot().agent.moviepilot.filter,
-                        Some(year),
-                    )
-                    .await;
-                runtime_state.moviepilot_contexts = outcome.contexts.clone();
-                runtime_state.moviepilot_result = Some(json!({
-                    "result_count": outcome.contexts.len(),
-                    "requested_year": year,
-                    "attempts": outcome.attempts,
-                    "best": outcome.best.as_ref().map(summarize_moviepilot_result),
-                }));
-                self.append_agent_request_event_with_meta(
-                    request.id,
-                    "agent.moviepilot_search_completed",
-                    None,
-                    Some("system"),
-                    "已完成 MoviePilot 聚合搜索",
-                    runtime_state.moviepilot_result.clone().unwrap_or_else(|| json!({})),
-                    "private",
-                    "tool",
-                )
-                .await?;
-                self.persist_agent_runtime_snapshot(
-                    request,
-                    runtime_state,
-                    &json!({
-                        "phase": "searching",
-                        "message": if outcome.contexts.is_empty() { "未匹配到可用资源。" } else { "已匹配到候选资源，Agent 正在做最终决策。" },
-                        "result_count": outcome.contexts.len(),
-                    }),
-                    "searching",
-                    false,
-                    None,
-                    None,
-                )
-                .await?;
-                Ok(None)
-            }
             "ask_user" => {
                 let question = AgentPendingQuestion {
                     id: Uuid::now_v7().to_string(),
@@ -2088,85 +1955,578 @@ LIMIT 1
         }
     }
 
+    async fn execute_agent_tool_request(
+        &self,
+        job_id: Uuid,
+        request: &mut AgentRequest,
+        runtime_state: &mut AgentLoopRuntimeState,
+        tool_request: &LlmAgentToolRequest,
+    ) -> anyhow::Result<Value> {
+        let query = tool_request
+            .query
+            .clone()
+            .unwrap_or_else(|| request.title.clone());
+        match tool_request.tool.as_str() {
+            "tmdb_search" => {
+                self.set_job_progress(job_id, "tmdb", 1, 0, "正在匹配 TMDB 元数据", json!({}))
+                    .await?;
+                let payload = self
+                    .search_tmdb_for_request(
+                        request,
+                        &query,
+                        tool_request.year.or_else(|| agent_resolved_year(request, runtime_state)),
+                        tool_request.ranking_strategy.as_deref(),
+                        tool_request.intent_hint.as_deref(),
+                        tool_request.franchise_mode.as_deref(),
+                    )
+                    .await?;
+                runtime_state.tmdb_candidates = payload
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                runtime_state.tmdb_metadata = payload.get("selected").cloned();
+                let status = if payload.get("matched").and_then(Value::as_bool).unwrap_or(false) {
+                    "success"
+                } else {
+                    "no_results"
+                };
+                agent_record_tool_execution(
+                    runtime_state,
+                    "tmdb_search",
+                    Some(query.as_str()),
+                    status,
+                    payload.clone(),
+                );
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.tmdb_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 TMDB 搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": if status == "success" { "已完成 TMDB 元数据匹配。" } else { "TMDB 未匹配到合适结果。" },
+                        "tmdb": payload,
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(payload)
+            }
+            "tvdb_search" => {
+                let payload = self
+                    .search_tvdb_for_request(
+                        &query,
+                        tool_request.year.or_else(|| agent_resolved_year(request, runtime_state)),
+                        tool_request
+                            .media_type
+                            .as_deref()
+                            .unwrap_or_else(|| agent_effective_media_type(&request.media_type, None)),
+                        tool_request.ranking_strategy.as_deref(),
+                    )
+                    .await?;
+                runtime_state.tvdb_candidates = payload
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                runtime_state.tvdb_result = payload.get("selected").cloned().or(Some(payload.clone()));
+                let status = if payload.get("matched").and_then(Value::as_bool).unwrap_or(false) {
+                    "success"
+                } else {
+                    "no_results"
+                };
+                agent_record_tool_execution(
+                    runtime_state,
+                    "tvdb_search",
+                    Some(query.as_str()),
+                    status,
+                    payload.clone(),
+                );
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.tvdb_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 TVDB 搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": if status == "success" { "已完成 TVDB 元数据匹配。" } else { "TVDB 未匹配到合适结果。" },
+                        "tvdb": payload,
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(payload)
+            }
+            "bangumi_search" => {
+                let payload = self
+                    .search_bangumi_for_request(
+                        &query,
+                        tool_request.year.or_else(|| agent_resolved_year(request, runtime_state)),
+                        tool_request.ranking_strategy.as_deref(),
+                        tool_request.intent_hint.as_deref(),
+                        tool_request.franchise_mode.as_deref(),
+                    )
+                    .await?;
+                runtime_state.bangumi_candidates = payload
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                runtime_state.bangumi_result = payload.get("selected").cloned().or(Some(payload.clone()));
+                let status = if payload.get("matched").and_then(Value::as_bool).unwrap_or(false) {
+                    "success"
+                } else {
+                    "no_results"
+                };
+                agent_record_tool_execution(
+                    runtime_state,
+                    "bangumi_search",
+                    Some(query.as_str()),
+                    status,
+                    payload.clone(),
+                );
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.bangumi_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 Bangumi 搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "analyzing",
+                        "message": if status == "success" { "已完成 Bangumi 元数据匹配。" } else { "Bangumi 未匹配到合适结果。" },
+                        "bangumi": payload,
+                    }),
+                    "analyzing",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(payload)
+            }
+            "moviepilot_search" => {
+                self.set_job_progress(job_id, "moviepilot", 1, 0, "正在搜索资源", json!({}))
+                    .await?;
+                let Some(year) = tool_request
+                    .year
+                    .or_else(|| agent_resolved_year(request, runtime_state))
+                else {
+                    let question = AgentPendingQuestion {
+                        id: Uuid::now_v7().to_string(),
+                        prompt: "请补充该影视作品的年份，便于精确匹配资源。".to_string(),
+                        helper_text: Some("例如 2024。".to_string()),
+                        options: Vec::new(),
+                        allow_free_text: true,
+                        context_brief: Some(query.clone()),
+                        asked_at: Utc::now(),
+                        deadline_at: Some(
+                            Utc::now()
+                                + Duration::minutes(
+                                    self.config_snapshot().agent.question_timeout_minutes as i64,
+                                ),
+                        ),
+                    };
+                    self.persist_agent_runtime_snapshot(
+                        request,
+                        runtime_state,
+                        &json!({
+                            "phase": "awaiting_user",
+                            "message": question.prompt,
+                        }),
+                        "awaiting_user",
+                        true,
+                        Some(&question),
+                        question.deadline_at,
+                    )
+                    .await?;
+                    self.update_request_state_with_event_meta(
+                        request.id,
+                        USER_STATUS_ACTION_REQUIRED,
+                        "waiting_user",
+                        "manual_review",
+                        false,
+                        &request.admin_note,
+                        "等待用户补充信息",
+                        &request.provider_result,
+                        None,
+                        None,
+                        "agent.question_asked",
+                        None,
+                        Some("system"),
+                        "Agent 需要你补充信息后才能继续",
+                        json!({
+                            "question_id": question.id,
+                            "prompt": question.prompt,
+                            "allow_free_text": true,
+                            "deadline_at": question.deadline_at,
+                        }),
+                        "public",
+                        "question",
+                        Some("awaiting_user"),
+                        Some(true),
+                    )
+                    .await?;
+                    return Ok(json!({ "paused": true, "question_id": question.id }));
+                };
+                let mut moviepilot =
+                    MoviePilotProvider::from_config(&self.config_snapshot().agent.moviepilot)?
+                        .into_client();
+                let tmdb = request
+                    .tmdb_id
+                    .filter(|value| *value > 0)
+                    .and_then(|tmdb_id| runtime_state.tmdb_metadata.as_ref().map(|_| tmdb_id))
+                    .map(|tmdb_id| AgentResolvedTmdbMetadata {
+                        kind: if request.media_type.eq_ignore_ascii_case("movie") {
+                            "movie"
+                        } else {
+                            "tv"
+                        },
+                        tmdb_id,
+                        details: json!({}),
+                        release_dates: None,
+                        watch_providers: None,
+                    });
+                let outcome = self
+                    .search_moviepilot_aggregated_for_request(
+                        &mut moviepilot,
+                        request,
+                        tmdb.as_ref(),
+                        &self.config_snapshot().agent.moviepilot.filter,
+                        Some(year),
+                        Some(query.as_str()),
+                    )
+                    .await;
+                let candidates = outcome
+                    .contexts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, context)| {
+                        let mut row = summarize_moviepilot_result(context);
+                        if let Some(obj) = row.as_object_mut() {
+                            obj.insert("index".to_string(), json!(index));
+                        }
+                        row
+                    })
+                    .collect::<Vec<_>>();
+                runtime_state.moviepilot_contexts = outcome.contexts.clone();
+                runtime_state.moviepilot_candidates = candidates.clone();
+                let payload = json!({
+                    "query": query,
+                    "result_count": outcome.contexts.len(),
+                    "requested_year": year,
+                    "attempts": outcome.attempts,
+                    "candidates": candidates,
+                    "best": outcome.best.as_ref().map(summarize_moviepilot_result),
+                });
+                runtime_state.moviepilot_result = Some(payload.clone());
+                let status = if outcome.contexts.is_empty() {
+                    "no_results"
+                } else {
+                    "success"
+                };
+                agent_record_tool_execution(
+                    runtime_state,
+                    "moviepilot_search",
+                    Some(query.as_str()),
+                    status,
+                    payload.clone(),
+                );
+                self.append_agent_request_event_with_meta(
+                    request.id,
+                    "agent.moviepilot_search_completed",
+                    None,
+                    Some("system"),
+                    "已完成 MoviePilot 聚合搜索",
+                    payload.clone(),
+                    "private",
+                    "tool",
+                )
+                .await?;
+                self.persist_agent_runtime_snapshot(
+                    request,
+                    runtime_state,
+                    &json!({
+                        "phase": "searching",
+                        "message": if outcome.contexts.is_empty() { "未匹配到可用资源。" } else { "已匹配到候选资源，Agent 正在做最终决策。" },
+                        "result_count": outcome.contexts.len(),
+                    }),
+                    "searching",
+                    false,
+                    None,
+                    None,
+                )
+                .await?;
+                Ok(payload)
+            }
+            _ => {
+                let payload = json!({
+                    "tool": tool_request.tool,
+                    "error": "unsupported tool",
+                });
+                agent_record_tool_execution(
+                    runtime_state,
+                    &tool_request.tool,
+                    Some(query.as_str()),
+                    "failed",
+                    payload.clone(),
+                );
+                Ok(payload)
+            }
+        }
+    }
+
     async fn search_tvdb_for_request(
         &self,
         query: &str,
         year: Option<i32>,
         media_type: &str,
+        ranking_strategy: Option<&str>,
     ) -> anyhow::Result<Value> {
         let cfg = self.config_snapshot();
         if !cfg.scraper.tvdb.enabled || cfg.scraper.tvdb.api_key.trim().is_empty() {
             return Ok(json!({ "provider": "tvdb", "configured": false }));
         }
-        let provider_config = ls_scraper::TvdbConfig {
-            enabled: cfg.scraper.tvdb.enabled,
-            base_url: cfg.scraper.tvdb.base_url.clone(),
-            api_key: cfg.scraper.tvdb.api_key.clone(),
-            pin: cfg.scraper.tvdb.pin.clone(),
-            timeout_seconds: cfg.scraper.tvdb.timeout_seconds,
-        };
-        let client = TvdbClient::new(&self.http_client, &provider_config);
-        let payload = if media_type.eq_ignore_ascii_case("movie") {
-            client.scrape_movie_by_title(query, year).await?
+        let token = self.tvdb_login_token().await?;
+        let base_url = cfg.scraper.tvdb.base_url.trim().trim_end_matches('/');
+        let kind = if media_type.eq_ignore_ascii_case("movie") {
+            "movie"
         } else {
-            client.scrape_series_by_title(query, year).await?
+            "series"
         };
-        Ok(match payload {
-            Some(result) => json!({
-                "provider": "tvdb",
-                "matched": true,
-                "title": result.title,
-                "original_title": result.original_title,
-                "production_year": result.production_year,
-                "tvdb_id": result.external_ids.tvdb,
-                "tmdb_id": result.external_ids.tmdb,
-                "raw_id": result.item_id,
-            }),
-            None => json!({
-                "provider": "tvdb",
-                "matched": false,
-                "query": query,
-                "year": year,
-            }),
-        })
+        let endpoint = format!(
+            "{base_url}/search?query={query}&type={kind}",
+            query = urlencoding::encode(query)
+        );
+        let payload: Value = self
+            .http_client
+            .get(&endpoint)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(cfg.scraper.tvdb.timeout_seconds.max(1) as u64))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let raw_candidates = payload
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut candidates = raw_candidates
+            .iter()
+            .map(|item| {
+                json!({
+                    "provider": "tvdb",
+                    "title": item.get("name").or_else(|| item.get("title")).and_then(Value::as_str),
+                    "original_title": item.get("aliases").and_then(Value::as_array).and_then(|arr| arr.first()).and_then(Value::as_str),
+                    "production_year": item.get("year").or_else(|| item.get("first_air_time")).and_then(Value::as_str).and_then(parse_year_prefix),
+                    "tvdb_id": item.get("tvdb_id").or_else(|| item.get("id")),
+                    "tmdb_id": item.get("remote_ids").and_then(Value::as_array).and_then(|arr| arr.iter().find(|v| v.get("sourceName").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case("themoviedb.com")))).and_then(|v| v.get("id")),
+                    "raw": item,
+                })
+            })
+            .collect::<Vec<_>>();
+        agent_sort_metadata_candidates(&mut candidates, year, ranking_strategy, None, None);
+        let selected = candidates.first().cloned();
+        Ok(json!({
+            "provider": "tvdb",
+            "matched": selected.is_some(),
+            "query": query,
+            "year": year,
+            "ranking_strategy": ranking_strategy,
+            "selected": selected,
+            "candidates": candidates,
+        }))
+    }
+
+    async fn tvdb_login_token(&self) -> anyhow::Result<String> {
+        let cfg = self.config_snapshot();
+        let base_url = cfg.scraper.tvdb.base_url.trim().trim_end_matches('/');
+        let endpoint = format!("{base_url}/login");
+        let payload: Value = self
+            .http_client
+            .post(&endpoint)
+            .json(&json!({
+                "apikey": cfg.scraper.tvdb.api_key,
+                "pin": cfg.scraper.tvdb.pin,
+            }))
+            .timeout(std::time::Duration::from_secs(
+                cfg.scraper.tvdb.timeout_seconds.max(1),
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        payload
+            .get("data")
+            .and_then(|data| data.get("token"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .context("tvdb login response missing token")
     }
 
     async fn search_bangumi_for_request(
         &self,
         query: &str,
         year: Option<i32>,
+        ranking_strategy: Option<&str>,
+        intent_hint: Option<&str>,
+        franchise_mode: Option<&str>,
     ) -> anyhow::Result<Value> {
         let cfg = self.config_snapshot();
         if !cfg.scraper.bangumi.enabled || cfg.scraper.bangumi.access_token.trim().is_empty() {
             return Ok(json!({ "provider": "bangumi", "configured": false }));
         }
-        let provider_config = ls_scraper::BangumiConfig {
-            enabled: cfg.scraper.bangumi.enabled,
-            base_url: cfg.scraper.bangumi.base_url.clone(),
-            access_token: cfg.scraper.bangumi.access_token.clone(),
-            timeout_seconds: cfg.scraper.bangumi.timeout_seconds,
-            user_agent: cfg.scraper.bangumi.user_agent.clone(),
+        let base_url = cfg.scraper.bangumi.base_url.trim().trim_end_matches('/');
+        let mut req = self
+            .http_client
+            .post(format!("{base_url}/v0/search/subjects"))
+            .timeout(std::time::Duration::from_secs(cfg.scraper.bangumi.timeout_seconds.max(1) as u64))
+            .header(
+                reqwest::header::USER_AGENT,
+                if cfg.scraper.bangumi.user_agent.trim().is_empty() {
+                    "lumenstream/0.1"
+                } else {
+                    cfg.scraper.bangumi.user_agent.trim()
+                },
+            );
+        if !cfg.scraper.bangumi.access_token.trim().is_empty() {
+            req = req.bearer_auth(cfg.scraper.bangumi.access_token.trim());
+        }
+        let payload: Value = req
+            .json(&json!({
+                "keyword": query,
+                "sort": "match",
+                "filter": { "type": [2] }
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let raw_candidates = payload
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut candidates = raw_candidates
+            .iter()
+            .map(|item| {
+                json!({
+                    "provider": "bangumi",
+                    "title": item.get("name_cn").or_else(|| item.get("name")).and_then(Value::as_str),
+                    "original_title": item.get("name").and_then(Value::as_str),
+                    "production_year": item.get("date").or_else(|| item.get("air_date")).and_then(Value::as_str).and_then(parse_year_prefix),
+                    "bangumi_id": item.get("id"),
+                    "rank": item.get("score").and_then(|v| v.get("rank")),
+                    "raw": item,
+                })
+            })
+            .collect::<Vec<_>>();
+        agent_sort_metadata_candidates(
+            &mut candidates,
+            year,
+            ranking_strategy,
+            intent_hint,
+            franchise_mode,
+        );
+        let selected = candidates.first().cloned();
+        Ok(json!({
+            "provider": "bangumi",
+            "matched": selected.is_some(),
+            "query": query,
+            "year": year,
+            "ranking_strategy": ranking_strategy,
+            "intent_hint": intent_hint,
+            "franchise_mode": franchise_mode,
+            "selected": selected,
+            "candidates": candidates,
+        }))
+    }
+
+    async fn search_tmdb_for_request(
+        &self,
+        request: &AgentRequest,
+        query: &str,
+        year: Option<i32>,
+        ranking_strategy: Option<&str>,
+        intent_hint: Option<&str>,
+        franchise_mode: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let media_type = agent_effective_media_type(&request.media_type, None);
+        let results = if media_type.eq_ignore_ascii_case("movie") {
+            self.tmdb_search_movie_results(query, year).await?
+        } else {
+            self.tmdb_search_tv_results(query, year).await?
         };
-        let client = BangumiClient::new(&self.http_client, &provider_config);
-        let payload = client.scrape_series_by_title(query, year).await?;
-        Ok(match payload {
-            Some(result) => json!({
-                "provider": "bangumi",
-                "matched": true,
-                "title": result.title,
-                "original_title": result.original_title,
-                "production_year": result.production_year,
-                "bangumi_id": result.external_ids.bangumi,
-                "tmdb_id": result.external_ids.tmdb,
-                "tvdb_id": result.external_ids.tvdb,
-            }),
-            None => json!({
-                "provider": "bangumi",
-                "matched": false,
-                "query": query,
-                "year": year,
-            }),
-        })
+        let mut candidates = results
+            .into_iter()
+            .map(|candidate| {
+                json!({
+                    "provider": "tmdb",
+                    "tmdb_id": candidate.get("id"),
+                    "title": candidate.get("title").or_else(|| candidate.get("name")).and_then(Value::as_str),
+                    "original_title": candidate.get("original_title").or_else(|| candidate.get("original_name")).and_then(Value::as_str),
+                    "production_year": candidate.get("release_date").or_else(|| candidate.get("first_air_date")).and_then(Value::as_str).and_then(parse_year_from_date),
+                    "popularity": candidate.get("popularity"),
+                    "vote_count": candidate.get("vote_count"),
+                    "raw": candidate,
+                })
+            })
+            .collect::<Vec<_>>();
+        agent_sort_metadata_candidates(
+            &mut candidates,
+            year,
+            ranking_strategy,
+            intent_hint,
+            franchise_mode,
+        );
+        let selected = candidates.first().cloned();
+        Ok(json!({
+            "provider": "tmdb",
+            "matched": selected.is_some(),
+            "query": query,
+            "year": year,
+            "ranking_strategy": ranking_strategy,
+            "intent_hint": intent_hint,
+            "franchise_mode": franchise_mode,
+            "selected": selected,
+            "candidates": candidates,
+        }))
     }
 
     async fn search_moviepilot_aggregated_for_request(
@@ -2176,6 +2536,7 @@ LIMIT 1
         tmdb: Option<&AgentResolvedTmdbMetadata>,
         filter: &ls_config::AgentMoviePilotFilterConfig,
         forced_year: Option<i32>,
+        query_override: Option<&str>,
     ) -> AgentMoviePilotSearchOutcome {
         let mut outcome = AgentMoviePilotSearchOutcome::default();
         let effective_media_type = agent_effective_media_type(&request.media_type, tmdb);
@@ -2220,26 +2581,28 @@ LIMIT 1
             }
         }
 
-        match moviepilot.search_by_title(&request.title).await {
-            Ok(response) => {
-                let contexts = decode_search_contexts(&response.data);
-                outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                    strategy: "title_aggregate".to_string(),
-                    query: request.title.clone(),
-                    success: response.success,
-                    result_count: contexts.len(),
-                    error: response.message.clone(),
-                });
-                agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
-            }
-            Err(err) => {
-                outcome.attempts.push(AgentMoviePilotSearchAttempt {
-                    strategy: "title_aggregate".to_string(),
-                    query: request.title.clone(),
-                    success: false,
-                    result_count: 0,
-                    error: Some(err.to_string()),
-                });
+        for title in agent_collect_moviepilot_search_queries(request, tmdb, query_override) {
+            match moviepilot.search_by_title(&title).await {
+                Ok(response) => {
+                    let contexts = decode_search_contexts(&response.data);
+                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                        strategy: "title_aggregate".to_string(),
+                        query: title.clone(),
+                        success: response.success,
+                        result_count: contexts.len(),
+                        error: response.message.clone(),
+                    });
+                    agent_merge_moviepilot_contexts(&mut outcome.contexts, contexts);
+                }
+                Err(err) => {
+                    outcome.attempts.push(AgentMoviePilotSearchAttempt {
+                        strategy: "title_aggregate".to_string(),
+                        query: title.clone(),
+                        success: false,
+                        result_count: 0,
+                        error: Some(err.to_string()),
+                    });
+                }
             }
         }
 
@@ -3268,7 +3631,7 @@ fn agent_resolved_year(request: &AgentRequest, runtime_state: &AgentLoopRuntimeS
     runtime_state
         .tmdb_metadata
         .as_ref()
-        .and_then(|value| value.get("year"))
+        .and_then(|value| value.get("year").or_else(|| value.get("production_year")))
         .and_then(Value::as_i64)
         .and_then(|value| i32::try_from(value).ok())
         .or_else(|| {
@@ -3348,7 +3711,400 @@ fn agent_filter_moviepilot_contexts(
         .collect()
 }
 
+fn parse_year_prefix(value: &str) -> Option<i32> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '-')
+        .collect::<String>()
+        .get(..4)
+        .and_then(|prefix| prefix.parse::<i32>().ok())
+}
+
+fn agent_action_is_search(action: &str) -> bool {
+    matches!(
+        action,
+        "run_tools" | "tmdb_search" | "tvdb_search" | "bangumi_search" | "moviepilot_search"
+    )
+}
+
+fn agent_latest_intent_hint(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> &'static str {
+    if let Some(intent) = runtime_state.intent.as_ref() {
+        match intent.effective_request_type.as_str() {
+            "replace_source" => return "replace_source",
+            "missing_episode" => return "repair_missing_episode",
+            "missing_season" => return "repair_missing_season",
+            _ => {}
+        }
+    }
+
+    let raw_text = agent_request_raw_text(request).to_ascii_lowercase();
+    if raw_text.contains("追新")
+        || raw_text.contains("最新")
+        || raw_text.contains("新一季")
+        || raw_text.contains("最新一季")
+        || raw_text.contains("最新季")
+        || raw_text.contains("follow")
+        || raw_text.contains("latest")
+    {
+        "follow_latest"
+    } else {
+        match request.request_type.as_str() {
+            "replace_source" => "replace_source",
+            "missing_episode" => "repair_missing_episode",
+            "missing_season" => "repair_missing_season",
+            _ => "find_any_available",
+        }
+    }
+}
+
+fn agent_default_ranking_strategy(
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> &'static str {
+    let intent_hint = agent_latest_intent_hint(request, runtime_state);
+    if intent_hint == "follow_latest" {
+        "latest_release"
+    } else if agent_resolved_year(request, runtime_state).is_some() {
+        "exact_year_first"
+    } else {
+        "best_match"
+    }
+}
+
+fn agent_default_franchise_mode(
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> &'static str {
+    if agent_latest_intent_hint(request, runtime_state) == "follow_latest" {
+        "prefer_newest_entry"
+    } else {
+        "prefer_exact_alias"
+    }
+}
+
+fn agent_should_search_bangumi(
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> bool {
+    if !request.media_type.eq_ignore_ascii_case("series") {
+        return false;
+    }
+    let raw = agent_request_raw_text(request).to_ascii_lowercase();
+    agent_latest_intent_hint(request, runtime_state) == "follow_latest"
+        || raw.contains("动画")
+        || raw.contains("动漫")
+        || raw.contains("番")
+        || raw.contains("jojo")
+}
+
+fn agent_primary_request_query(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> String {
+    runtime_state
+        .intent
+        .as_ref()
+        .map(|intent| intent.title.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| request.title.trim().to_string())
+}
+
+fn agent_pick_best_title_query(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> String {
+    for candidate in [
+        runtime_state.bangumi_result.as_ref(),
+        runtime_state.tmdb_metadata.as_ref(),
+        runtime_state.tvdb_result.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for key in ["title", "original_title"] {
+            if let Some(value) = candidate.get(key).and_then(Value::as_str)
+                && !value.trim().is_empty()
+            {
+                return value.trim().to_string();
+            }
+        }
+    }
+    agent_primary_request_query(request, runtime_state)
+}
+
+fn agent_make_tool_request(
+    tool: &str,
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+    query: Option<String>,
+    year: Option<i32>,
+) -> LlmAgentToolRequest {
+    LlmAgentToolRequest {
+        tool: tool.to_string(),
+        query: Some(query.unwrap_or_else(|| agent_primary_request_query(request, runtime_state))),
+        year: year.or_else(|| agent_resolved_year(request, runtime_state)),
+        media_type: Some(request.media_type.clone()),
+        season: request.season_numbers.first().copied(),
+        ranking_strategy: Some(agent_default_ranking_strategy(request, runtime_state).to_string()),
+        intent_hint: Some(agent_latest_intent_hint(request, runtime_state).to_string()),
+        franchise_mode: Some(agent_default_franchise_mode(request, runtime_state).to_string()),
+    }
+}
+
+fn agent_collect_tool_requests(
+    action: &LlmAgentLoopAction,
+    request: &AgentRequest,
+    runtime_state: &AgentLoopRuntimeState,
+) -> Vec<LlmAgentToolRequest> {
+    let mut collected = if action.tool_requests.is_empty() {
+        if agent_action_is_search(&action.action) && action.action != "run_tools" {
+            vec![LlmAgentToolRequest {
+                tool: action.action.clone(),
+                query: action.query.clone(),
+                year: action.year,
+                media_type: action.media_type.clone(),
+                season: action.season,
+                ranking_strategy: None,
+                intent_hint: None,
+                franchise_mode: None,
+            }]
+        } else {
+            Vec::new()
+        }
+    } else {
+        action.tool_requests.clone()
+    };
+
+    if collected.is_empty() && action.action == "run_tools" {
+        let mut fallback = Vec::new();
+        if runtime_state.tmdb_metadata.is_none() && request.tmdb_id.unwrap_or_default() <= 0 {
+            fallback.push(agent_make_tool_request("tmdb_search", request, runtime_state, None, None));
+        }
+        if request.media_type.eq_ignore_ascii_case("series") && runtime_state.tvdb_result.is_none() {
+            fallback.push(agent_make_tool_request("tvdb_search", request, runtime_state, None, None));
+        }
+        if agent_should_search_bangumi(request, runtime_state) && runtime_state.bangumi_result.is_none() {
+            fallback.push(agent_make_tool_request("bangumi_search", request, runtime_state, None, None));
+        }
+        if fallback.is_empty() {
+            fallback.push(agent_make_tool_request(
+                "moviepilot_search",
+                request,
+                runtime_state,
+                Some(agent_pick_best_title_query(request, runtime_state)),
+                agent_resolved_year(request, runtime_state),
+            ));
+        }
+        collected = fallback;
+    }
+
+    let mut dedup = HashSet::new();
+    collected
+        .into_iter()
+        .filter(|tool_request| !tool_request.tool.trim().is_empty())
+        .map(|mut tool_request| {
+            let preferred_query = if tool_request.tool == "moviepilot_search" {
+                agent_pick_best_title_query(request, runtime_state)
+            } else {
+                agent_primary_request_query(request, runtime_state)
+            };
+            tool_request.query = Some(
+                tool_request
+                    .query
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(preferred_query),
+            );
+            if tool_request.year.is_none() {
+                tool_request.year = agent_resolved_year(request, runtime_state);
+            }
+            if tool_request.media_type.is_none() {
+                tool_request.media_type = Some(request.media_type.clone());
+            }
+            if tool_request.season.is_none() {
+                tool_request.season = request.season_numbers.first().copied();
+            }
+            if tool_request.ranking_strategy.is_none() {
+                tool_request.ranking_strategy =
+                    Some(agent_default_ranking_strategy(request, runtime_state).to_string());
+            }
+            if tool_request.intent_hint.is_none() {
+                tool_request.intent_hint =
+                    Some(agent_latest_intent_hint(request, runtime_state).to_string());
+            }
+            if tool_request.franchise_mode.is_none() {
+                tool_request.franchise_mode =
+                    Some(agent_default_franchise_mode(request, runtime_state).to_string());
+            }
+            tool_request
+        })
+        .filter(|tool_request| {
+            dedup.insert(format!(
+                "{}|{}|{:?}|{:?}|{:?}",
+                tool_request.tool,
+                tool_request.query.as_deref().unwrap_or_default(),
+                tool_request.year,
+                tool_request.ranking_strategy,
+                tool_request.intent_hint
+            ))
+        })
+        .take(3)
+        .collect()
+}
+
+fn agent_record_tool_execution(
+    runtime_state: &mut AgentLoopRuntimeState,
+    action: &str,
+    query: Option<&str>,
+    status: &str,
+    context: Value,
+) {
+    runtime_state.tool_history.push(AgentToolExecutionRecord {
+        action: action.to_string(),
+        query: query.map(str::to_string),
+        status: status.to_string(),
+        context,
+        created_at: Utc::now(),
+    });
+    if runtime_state.tool_history.len() > 12 {
+        let excess = runtime_state.tool_history.len() - 12;
+        runtime_state.tool_history.drain(0..excess);
+    }
+    if status != "success" {
+        *runtime_state
+            .failed_action_counts
+            .entry(action.to_string())
+            .or_insert(0) += 1;
+    }
+}
+
+fn agent_sort_metadata_candidates(
+    candidates: &mut [Value],
+    year: Option<i32>,
+    ranking_strategy: Option<&str>,
+    intent_hint: Option<&str>,
+    franchise_mode: Option<&str>,
+) {
+    let ranking_strategy = ranking_strategy.unwrap_or("best_match");
+    let intent_hint = intent_hint.unwrap_or("find_any_available");
+    let franchise_mode = franchise_mode.unwrap_or("prefer_exact_alias");
+
+    candidates.sort_by(|left, right| {
+        let left_score =
+            agent_metadata_candidate_score(left, year, ranking_strategy, intent_hint, franchise_mode);
+        let right_score =
+            agent_metadata_candidate_score(right, year, ranking_strategy, intent_hint, franchise_mode);
+        right_score
+            .cmp(&left_score)
+            .then_with(|| {
+                agent_metadata_candidate_year(right)
+                    .cmp(&agent_metadata_candidate_year(left))
+            })
+            .then_with(|| {
+                agent_value_to_i64(right.get("popularity").unwrap_or(&Value::Null))
+                    .cmp(&agent_value_to_i64(left.get("popularity").unwrap_or(&Value::Null)))
+            })
+            .then_with(|| {
+                let left_rank = agent_value_to_i64(left.get("rank").unwrap_or(&Value::Null))
+                    .unwrap_or(i64::MAX);
+                let right_rank = agent_value_to_i64(right.get("rank").unwrap_or(&Value::Null))
+                    .unwrap_or(i64::MAX);
+                left_rank.cmp(&right_rank)
+            })
+    });
+}
+
+fn agent_metadata_candidate_year(candidate: &Value) -> Option<i32> {
+    candidate
+        .get("production_year")
+        .and_then(agent_value_to_i64)
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn agent_metadata_candidate_score(
+    candidate: &Value,
+    year: Option<i32>,
+    ranking_strategy: &str,
+    intent_hint: &str,
+    franchise_mode: &str,
+) -> i64 {
+    let candidate_year = agent_metadata_candidate_year(candidate).unwrap_or_default() as i64;
+    let popularity = candidate
+        .get("popularity")
+        .and_then(Value::as_f64)
+        .unwrap_or_default()
+        .round() as i64;
+    let vote_count = candidate
+        .get("vote_count")
+        .and_then(agent_value_to_i64)
+        .unwrap_or_default()
+        .min(500);
+    let bangumi_rank_bonus = candidate
+        .get("rank")
+        .and_then(agent_value_to_i64)
+        .map(|rank| (10_000 - rank).max(0))
+        .unwrap_or_default();
+
+    let mut score = popularity + vote_count + bangumi_rank_bonus;
+    if let Some(expected_year) = year {
+        let distance = (candidate_year - i64::from(expected_year)).abs();
+        if distance == 0 {
+            score += 2_000;
+        } else if distance == 1 {
+            score += 600;
+        } else {
+            score -= distance * 25;
+        }
+    }
+
+    if matches!(
+        ranking_strategy,
+        "latest_release" | "latest_airing" | "franchise_continuation"
+    ) {
+        score += candidate_year * 20;
+    }
+    if ranking_strategy == "exact_year_first" {
+        score += if year.is_some() { 400 } else { 0 };
+    }
+    if ranking_strategy == "highest_popularity" {
+        score += popularity * 5 + vote_count;
+    }
+    if intent_hint == "follow_latest" || franchise_mode == "prefer_newest_entry" {
+        score += candidate_year * 30;
+    }
+
+    score
+}
+
+fn agent_collect_moviepilot_search_queries(
+    request: &AgentRequest,
+    tmdb: Option<&AgentResolvedTmdbMetadata>,
+    query_override: Option<&str>,
+) -> Vec<String> {
+    let mut titles = Vec::new();
+    if let Some(value) = query_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        titles.push(value.to_string());
+    }
+    if let Some(tmdb) = tmdb
+        && let Some(title) = agent_tmdb_primary_title(tmdb.kind, &tmdb.details)
+    {
+        titles.push(title);
+    }
+    titles.extend(agent_collect_moviepilot_titles(request, tmdb));
+    agent_dedup_strings(titles)
+}
+
 fn agent_build_loop_context(request: &AgentRequest, runtime_state: &AgentLoopRuntimeState) -> Value {
+    let candidate_limit = 5usize;
+    let tool_history = runtime_state
+        .tool_history
+        .iter()
+        .rev()
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>();
     json!({
         "request": {
             "id": request.id,
@@ -3366,8 +4122,28 @@ fn agent_build_loop_context(request: &AgentRequest, runtime_state: &AgentLoopRun
             "public_phase": request.public_phase,
             "waiting_for_user": request.waiting_for_user,
         },
-        "resolved_year": agent_resolved_year(request, runtime_state),
-        "runtime": runtime_state,
+        "derived": {
+            "resolved_year": agent_resolved_year(request, runtime_state),
+            "intent_hint": agent_latest_intent_hint(request, runtime_state),
+            "ranking_strategy": agent_default_ranking_strategy(request, runtime_state),
+            "franchise_mode": agent_default_franchise_mode(request, runtime_state),
+            "moviepilot_query": agent_pick_best_title_query(request, runtime_state),
+        },
+        "runtime": {
+            "intent": runtime_state.intent,
+            "tmdb_selected": runtime_state.tmdb_metadata,
+            "tvdb_selected": runtime_state.tvdb_result,
+            "bangumi_selected": runtime_state.bangumi_result,
+            "moviepilot_selected": runtime_state.moviepilot_result,
+            "tmdb_candidates": runtime_state.tmdb_candidates.iter().take(candidate_limit).cloned().collect::<Vec<_>>(),
+            "tvdb_candidates": runtime_state.tvdb_candidates.iter().take(candidate_limit).cloned().collect::<Vec<_>>(),
+            "bangumi_candidates": runtime_state.bangumi_candidates.iter().take(candidate_limit).cloned().collect::<Vec<_>>(),
+            "moviepilot_candidates": runtime_state.moviepilot_candidates.iter().take(8).cloned().collect::<Vec<_>>(),
+            "recent_tool_history": tool_history,
+            "failed_action_counts": runtime_state.failed_action_counts,
+            "user_replies": runtime_state.user_replies,
+            "latest_reason": runtime_state.latest_reason,
+        },
     })
 }
 
@@ -3376,42 +4152,52 @@ fn agent_fallback_loop_action(
     runtime_state: &AgentLoopRuntimeState,
 ) -> LlmAgentLoopAction {
     let year = agent_resolved_year(request, runtime_state);
+    let query = agent_primary_request_query(request, runtime_state);
+    let follow_latest = agent_latest_intent_hint(request, runtime_state) == "follow_latest";
+
+    let mut metadata_tools = Vec::new();
     if runtime_state.tmdb_metadata.is_none() && request.tmdb_id.unwrap_or_default() <= 0 {
-        return LlmAgentLoopAction {
-            action: "tmdb_search".to_string(),
-            query: Some(request.title.clone()),
+        metadata_tools.push(agent_make_tool_request(
+            "tmdb_search",
+            request,
+            runtime_state,
+            Some(query.clone()),
             year,
-            media_type: Some(request.media_type.clone()),
-            reason: "resolve metadata first".to_string(),
+        ));
+    }
+    if request.media_type.eq_ignore_ascii_case("series") && runtime_state.tvdb_result.is_none() {
+        metadata_tools.push(agent_make_tool_request(
+            "tvdb_search",
+            request,
+            runtime_state,
+            Some(query.clone()),
+            year,
+        ));
+    }
+    if agent_should_search_bangumi(request, runtime_state) && runtime_state.bangumi_result.is_none() {
+        metadata_tools.push(agent_make_tool_request(
+            "bangumi_search",
+            request,
+            runtime_state,
+            Some(query.clone()),
+            year,
+        ));
+    }
+    if !metadata_tools.is_empty() && (follow_latest || year.is_none() || runtime_state.tmdb_metadata.is_none()) {
+        return LlmAgentLoopAction {
+            action: "run_tools".to_string(),
+            tool_requests: metadata_tools.into_iter().take(3).collect(),
+            reason: "resolve metadata with multi-source search before resource search".to_string(),
             ..Default::default()
         };
     }
+
     if year.is_none() {
-        if request.media_type.eq_ignore_ascii_case("series") && runtime_state.tvdb_result.is_none() {
-            return LlmAgentLoopAction {
-                action: "tvdb_search".to_string(),
-                query: Some(request.title.clone()),
-                media_type: Some(request.media_type.clone()),
-                reason: "series search benefits from tvdb year confirmation".to_string(),
-                ..Default::default()
-            };
-        }
-        if request.media_type.eq_ignore_ascii_case("series")
-            && runtime_state.bangumi_result.is_none()
-        {
-            return LlmAgentLoopAction {
-                action: "bangumi_search".to_string(),
-                query: Some(request.title.clone()),
-                media_type: Some(request.media_type.clone()),
-                reason: "anime-style series benefits from bangumi year confirmation".to_string(),
-                ..Default::default()
-            };
-        }
         return LlmAgentLoopAction {
             action: "ask_user".to_string(),
             question_prompt: Some("请补充该影视作品的年份，便于精确匹配资源。".to_string()),
             question_helper_text: Some("例如 2024。".to_string()),
-            question_context_brief: Some(request.title.clone()),
+            question_context_brief: Some(query.clone()),
             allow_free_text: true,
             reason: "year is required before moviepilot search".to_string(),
             ..Default::default()
@@ -3420,7 +4206,7 @@ fn agent_fallback_loop_action(
     if runtime_state.moviepilot_result.is_none() {
         return LlmAgentLoopAction {
             action: "moviepilot_search".to_string(),
-            query: Some(request.title.clone()),
+            query: Some(agent_pick_best_title_query(request, runtime_state)),
             year,
             media_type: Some(request.media_type.clone()),
             season: request.season_numbers.first().copied(),
@@ -3476,6 +4262,7 @@ fn agent_sanitize_loop_action(
     action
 }
 
+#[allow(dead_code)]
 fn agent_tmdb_kind_hints(media_type: &str, has_seasons: bool) -> Vec<&'static str> {
     if media_type.eq_ignore_ascii_case("movie") {
         vec!["movie"]
@@ -3488,6 +4275,7 @@ fn agent_tmdb_kind_hints(media_type: &str, has_seasons: bool) -> Vec<&'static st
     }
 }
 
+#[allow(dead_code)]
 fn agent_collect_tmdb_candidate_titles(payload: &Value) -> Vec<String> {
     let mut titles = Vec::new();
     for key in ["title", "name", "original_title", "original_name"] {
@@ -3522,6 +4310,7 @@ fn agent_extract_year_hints(text: &str) -> Vec<i32> {
     years
 }
 
+#[allow(dead_code)]
 fn agent_score_tmdb_candidate(
     candidate: &Value,
     preferred_titles: &[String],
@@ -4238,6 +5027,105 @@ mod agent_request_tests {
         assert_eq!(query.title.as_deref(), Some("南相思"));
         assert_eq!(query.year.as_deref(), Some("2026"));
         assert_eq!(query.sites, vec![8, 10, 2, 6, 7]);
+    }
+
+    #[test]
+    fn moviepilot_search_queries_prefer_override_and_dedup_titles() {
+        let request = sample_request();
+        let tmdb = AgentResolvedTmdbMetadata {
+            kind: "tv",
+            tmdb_id: 294285,
+            details: json!({
+                "name": "飙马野郎 JOJO的奇妙冒险",
+                "original_name": "Steel Ball Run"
+            }),
+            release_dates: None,
+            watch_providers: None,
+        };
+
+        let queries = agent_collect_moviepilot_search_queries(
+            &request,
+            Some(&tmdb),
+            Some("飙马野郎 JOJO的奇妙冒险"),
+        );
+
+        assert_eq!(queries.first().map(String::as_str), Some("飙马野郎 JOJO的奇妙冒险"));
+        assert!(queries.contains(&"Steel Ball Run".to_string()));
+    }
+
+    #[test]
+    fn metadata_sort_prefers_newest_entry_for_follow_latest() {
+        let mut candidates = vec![
+            json!({
+                "title": "JOJO的奇妙冒险 石之海",
+                "production_year": 2022,
+                "rank": 120,
+            }),
+            json!({
+                "title": "飙马野郎 JOJO的奇妙冒险",
+                "production_year": 2026,
+                "rank": 300,
+            }),
+        ];
+
+        agent_sort_metadata_candidates(
+            &mut candidates,
+            None,
+            Some("latest_release"),
+            Some("follow_latest"),
+            Some("prefer_newest_entry"),
+        );
+
+        assert_eq!(
+            candidates
+                .first()
+                .and_then(|item| item.get("title"))
+                .and_then(Value::as_str),
+            Some("飙马野郎 JOJO的奇妙冒险")
+        );
+    }
+
+    #[test]
+    fn fallback_loop_prefers_multi_source_metadata_search_for_latest_followup() {
+        let mut request = sample_request();
+        request.title = "我想要追新最新一季的jojo".to_string();
+        request.content = request.title.clone();
+        request.media_type = "series".to_string();
+
+        let runtime_state = AgentLoopRuntimeState {
+            intent: Some(AgentIntentAnalysis {
+                title: "jojo".to_string(),
+                media_type: "series".to_string(),
+                effective_request_type: "media_request".to_string(),
+                raw_text: request.content.clone(),
+                requires_media_search: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let action = agent_fallback_loop_action(&request, &runtime_state);
+        assert_eq!(action.action, "run_tools");
+        assert!(action.tool_requests.iter().any(|item| item.tool == "bangumi_search"));
+        assert!(action.tool_requests.iter().any(|item| item.tool == "tmdb_search"));
+    }
+
+    #[test]
+    fn tool_execution_record_tracks_failures() {
+        let mut runtime_state = AgentLoopRuntimeState::default();
+        agent_record_tool_execution(
+            &mut runtime_state,
+            "moviepilot_search",
+            Some("jojo"),
+            "failed",
+            json!({ "error": "403" }),
+        );
+
+        assert_eq!(runtime_state.tool_history.len(), 1);
+        assert_eq!(
+            runtime_state.failed_action_counts.get("moviepilot_search").copied(),
+            Some(1)
+        );
     }
 
     #[test]

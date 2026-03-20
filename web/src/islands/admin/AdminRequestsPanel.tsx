@@ -42,6 +42,7 @@ import type {
   AgentProviderStatus,
   AgentRequest,
   AgentRequestDetail,
+  AgentRequestRealtimeEvent,
   AgentReviewRequest,
   AgentSettings,
   AgentWorkflowStepState,
@@ -79,6 +80,52 @@ function requestTypeLabel(type: string): string {
 
 function hasObjectContent(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && Object.keys(value as object).length > 0;
+}
+
+function mergeRealtimeAdminRequestIntoList(
+  current: AgentRequest[],
+  incoming: AgentRequest,
+  statusFilter: string
+): AgentRequest[] {
+  const matchesFilter = !statusFilter || incoming.status_admin === statusFilter;
+  const existingIndex = current.findIndex((item) => item.id === incoming.id);
+
+  if (existingIndex < 0) {
+    return matchesFilter ? [incoming, ...current] : current;
+  }
+  if (!matchesFilter) {
+    return current.filter((item) => item.id !== incoming.id);
+  }
+  return current.map((item, index) => (index === existingIndex ? incoming : item));
+}
+
+function mergeRealtimeAdminEvent<T extends { id: string; created_at: string }>(
+  current: T[],
+  incoming?: T | null
+): T[] {
+  if (!incoming || current.some((item) => item.id === incoming.id)) {
+    return current;
+  }
+  return [...current, incoming].sort((left, right) =>
+    left.created_at.localeCompare(right.created_at)
+  );
+}
+
+function mergeRealtimeAdminDetail(
+  current: AgentRequestDetail | null,
+  incoming: AgentRequestRealtimeEvent
+): AgentRequestDetail | null {
+  if (!current || current.request.id !== incoming.request_id) {
+    return current;
+  }
+  const nextEvents = mergeRealtimeAdminEvent(current.events, incoming.latest_event);
+  return {
+    ...current,
+    request: incoming.request,
+    events: nextEvents,
+    public_events: mergeRealtimeAdminEvent(current.public_events ?? [], incoming.latest_event),
+    private_events: current.private_events ?? [],
+  };
 }
 
 function makeDefaultAgentSettings(): AgentSettings {
@@ -138,7 +185,6 @@ export function AdminRequestsPanel() {
 
   const onSelect = useCallback(async (requestId: string) => {
     setDetailLoading(true);
-    setDetail(null);
     try {
       const payload = await adminGetRequest(requestId);
       setDetail(payload);
@@ -202,11 +248,11 @@ export function AdminRequestsPanel() {
       };
       ws.onmessage = (event) => {
         try {
-          const parsed = JSON.parse(event.data) as { request_id?: string };
-          void reload(statusFilter);
-          if (parsed.request_id && detail?.request.id === parsed.request_id) {
-            void onSelect(parsed.request_id);
-          }
+          const parsed = JSON.parse(event.data) as AgentRequestRealtimeEvent;
+          setRequests((current) =>
+            mergeRealtimeAdminRequestIntoList(current, parsed.request, statusFilter)
+          );
+          setDetail((current) => mergeRealtimeAdminDetail(current, parsed));
         } catch {
           // Ignore malformed websocket events.
         }
@@ -225,7 +271,7 @@ export function AdminRequestsPanel() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [detail?.request.id, onSelect, ready, reload, statusFilter]);
+  }, [ready, statusFilter]);
 
   async function onReview(action: AgentReviewRequest["action"]) {
     if (!detail) return;
