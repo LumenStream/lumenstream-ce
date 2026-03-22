@@ -43,7 +43,7 @@ use ls_logging::LogHandle;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
 struct ApiMetrics {

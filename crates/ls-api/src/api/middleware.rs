@@ -280,9 +280,20 @@ async fn request_context_middleware(
 
     let method = req.method().to_string();
     let path = req.path().to_string();
+
+    let span = tracing::info_span!(
+        "http_request",
+        request_id = %request_id,
+        http.method = %method,
+        http.route = %path,
+    );
+
     let started = Instant::now();
-    let mut response = next.call(req).await?.map_into_boxed_body();
+    let mut response = next.call(req).instrument(span.clone()).await?.map_into_boxed_body();
     let duration_ms = started.elapsed().as_millis() as u64;
+
+    // Enter the span for post-processing (no .await points after this)
+    let _guard = span.enter();
 
     if let Some(state) = &state {
         state.metrics.record_latency(duration_ms);
@@ -310,9 +321,6 @@ async fn request_context_middleware(
     }
 
     info!(
-        request_id = %request_id,
-        method = %method,
-        path = %path,
         status,
         duration_ms,
         "request handled"
